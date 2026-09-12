@@ -1,0 +1,11 @@
+{
+  "moistureDry": 49,
+  "moistureWet": 21,
+  "lightDark": 73,
+  "lightDay": 10,
+  "autoSeconds": 300,
+  "waterPulseMs": 1000,
+  "lightOnBelow": 40,
+  "flaskHost": "0.0.0.0",
+  "flaskPort": 5000
+}

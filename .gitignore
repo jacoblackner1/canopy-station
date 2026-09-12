@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+sentinel_env/
+*.jpg
+*.log
+.DS_Store
