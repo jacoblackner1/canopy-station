@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=800, height=480, initial-scale=1, user-scalable=no"/>
+<title>Canopy</title>
+<style>
+  @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600&display=swap");
+  :root {
+    --bg: #0c0f0c; --surface: #151a15; --surface-2: #1c231c;
+    --fg: #e8eee6; --muted: #8a9386; --subtle: #5e675b;
+    --primary: #9cba8b; --primary-fg: #0c0f0c;
+    --warn: #c4a574; --alert: #c47a6a; --ok: #8fba8a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    width: 800px; height: 480px; margin: 0; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  }
+  .stage { display: flex; flex-direction: column; width: 800px; height: 480px; }
+  header {
+    height: 32px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 10px 0 12px; background: var(--surface); flex-shrink: 0;
+  }
+  header .brand { font-family: Fraunces, "Times New Roman", serif; font-size: 14px; margin: 0; }
+  header .clock { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+  .body { display: flex; flex: 1; min-height: 0; }
+  .cam { position: relative; flex: 1; min-width: 0; background: var(--surface); }
+  .cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cam .scrim {
+    pointer-events: none; position: absolute; inset: 0;
+    background: linear-gradient(to top, rgba(12,15,12,.7), transparent 42%);
+  }
+  .badge {
+    position: absolute; top: 8px; left: 8px;
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(12,15,12,.7); color: var(--fg);
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 6px;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 99px; background: var(--alert); }
+  .flag {
+    position: absolute; top: 8px; right: 8px;
+    font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
+  }
+  .flag.pulse { background: var(--primary); color: var(--primary-fg); }
+  .flag.lamp { background: var(--warn); color: #1a140c; }
+  .plant {
+    position: absolute; left: 8px; bottom: 8px;
+    font-family: Fraunces, serif; font-size: 18px; margin: 0; line-height: 1.15;
+  }
+  aside {
+    width: 240px; flex-shrink: 0; background: var(--surface);
+    display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px;
+  }
+  .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .status { font-family: Fraunces, serif; font-size: 18px; line-height: 1.15; margin: 0; }
+  .status.ok { color: var(--ok); }
+  .status.warn { color: var(--warn); }
+  .status.alert { color: var(--alert); }
+  .sub { font-size: 12px; color: var(--muted); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meter { }
+  .meter .row { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+  .meter .lab { letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .meter .val { font-family: "IBM Plex Mono", monospace; }
+  .meter .val.warn { color: var(--warn); }
+  .bar { position: relative; height: 4px; border-radius: 99px; background: var(--surface-2); margin-top: 4px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 99px; }
+  .bar.warn > i { background: var(--warn); }
+  .bar .m { position: absolute; top: 0; width: 1px; height: 100%; background: rgba(232,238,230,.4); }
+  .actions { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+  button {
+    height: 36px; border: 0; border-radius: 8px; cursor: pointer;
+    font: 500 13px "Source Sans 3", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  button:disabled { opacity: .4; cursor: default; }
+  .go { background: var(--primary); color: var(--primary-fg); }
+  .ghost {
+    background: transparent; color: var(--fg);
+    box-shadow: 0 0 0 1px rgba(232,238,230,.14);
+  }
+  .next { text-align: center; font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted); margin: 0; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <header>
+    <p class="brand">Canopy</p>
+    <p class="clock" id="clock">--:--:--</p>
+  </header>
+  <div class="body">
+    <div class="cam">
+      <img src="/video" alt="Station camera"/>
+      <div class="scrim"></div>
+      <div class="badge"><span class="dot"></span> Live</div>
+      <div class="flag pulse" id="pulse" hidden>Pulse</div>
+      <div class="flag lamp" id="lampFlag" hidden>Lamp</div>
+      <p class="plant" id="plant">—</p>
+    </div>
+    <aside>
+      <div>
+        <p class="k">Status</p>
+        <p class="status ok" id="status">Waiting</p>
+        <p class="sub" id="profile">—</p>
+      </div>
+      <div class="meter" id="m-moist"></div>
+      <div class="meter" id="m-light"></div>
+      <div class="meter" id="m-green"></div>
+      <div class="meter" id="m-yellow"></div>
+      <div class="actions">
+        <button class="go" id="water" type="button">Water 1s</button>
+        <button class="ghost" id="lamp" type="button">Lamp on</button>
+        <p class="next" id="next">Auto --:--</p>
+      </div>
+    </aside>
+  </div>
+</div>
+<script>
+function meter(el, label, value, low, high) {
+  const warn = (low != null && value < low) || (high != null && value > high);
+  const marks = (low != null ? `<span class="m" style="left:${low}%"></span>` : "")
+    + (high != null ? `<span class="m" style="left:${high}%"></span>` : "");
+  el.innerHTML = `<div class="row"><span class="lab">${label}</span>
+    <span class="val ${warn ? "warn" : ""}">${value.toFixed(1)}%</span></div>
+    <div class="bar ${warn ? "warn" : ""}"><i style="width:${Math.max(2, Math.min(100, value))}%"></i>${marks}</div>`;
+}
+function tickClock() {
+  document.getElementById("clock").textContent = new Date().toLocaleTimeString();
+}
+async function refresh() {
+  const s = await fetch("/status").then(r => r.json());
+  document.getElementById("status").textContent = s.status;
+  document.getElementById("status").className = "status " + s.status_tone;
+  document.getElementById("profile").textContent = s.profile;
+  document.getElementById("plant").textContent = s.profile;
+  meter(document.getElementById("m-moist"), "Moisture", s.moisture, s.low, s.high);
+  meter(document.getElementById("m-light"), "Light", s.light, 40, null);
+  meter(document.getElementById("m-green"), "Green", s.green * 100, 25, null);
+  meter(document.getElementById("m-yellow"), "Yellow", s.yellow * 100, null, 15);
+  document.getElementById("pulse").hidden = !s.pump;
+  document.getElementById("lampFlag").hidden = !s.lamp || s.pump;
+  const lampBtn = document.getElementById("lamp");
+  lampBtn.textContent = s.lamp ? "Lamp off" : "Lamp on";
+  lampBtn.className = s.lamp ? "go" : "ghost";
+  document.getElementById("water").disabled = s.pump;
+  const remain = Math.max(0, Math.floor(s.auto_in));
+  const mm = Math.floor(remain / 60);
+  const ss = String(remain % 60).padStart(2, "0");
+  document.getElementById("next").textContent = "Auto " + mm + ":" + ss;
+}
+document.getElementById("water").onclick = () => fetch("/water", { method: "POST" });
+document.getElementById("lamp").onclick = () => fetch("/light", { method: "POST" });
+tickClock();
+refresh();
+setInterval(tickClock, 1000);
+setInterval(refresh, 1500);
+</script>
+</body>
+</html>
