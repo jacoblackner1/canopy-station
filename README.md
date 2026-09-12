@@ -60,19 +60,39 @@ python3 plant_dashboard.py
 
 Watch for `Arduino on /dev/ttyUSB0` and `sensor raw … -> moisture …% light …%`. Refresh the kiosk (or rerun `./scripts/start_kiosk.sh`).
 
-Your calibration lives in `station.json` (air 49 / water 21, dark 73 / daylight 10). Edit that file rather than the Python if a number changes.
+## Calibrate moisture (this is what makes the % accurate)
+
+The Nano sends **analog 0–1023**. Capacitive probes read **high in air, low in water**. The percentage is:
+
+`(dry − current) / (dry − wet) × 100`
+
+Your old `49 / 21` values were on a 0–100 scale, so a real reading of ~497 looked like 0%. Use the analog numbers from PuTTY (`sensor raw 497/548` — first number is moisture).
+
+**On the kiosk (easiest):**
+
+1. Hold the probe in **air** for 5 seconds. Tap **Set air**.
+2. Dunk the probe in a **glass of water** for 5 seconds. Tap **Set water**.
+3. Put the probe back in the pot. Moisture should sit somewhere between 0% and 100%.
+
+**Or edit `station.json`:**
+
+```json
+"moistureDry": 600,
+"moistureWet": 250
+```
+
+Replace 600 with the air number and 250 with the water number (water must be the smaller one). Save. The dashboard reloads this file on its own.
+
+Light uses the same inverted scale (`lightDark` in a dark room, `lightDay` in daylight).
 
 ## If pump / lamp work but moisture and light stay blank
 
-The buttons only write to the Nano. The meters need the Nano to **print** `MOISTURE:n|LIGHT:n` and the dashboard to keep `/status` answering while the camera is streaming.
-
-1. `git pull` and restart `python3 plant_dashboard.py` (this update).
+1. `git pull` and restart `python3 plant_dashboard.py`.
 2. Bottom-right of the kiosk now says one of:
-   - `raw 38 / 52` — sensors are live
-   - `saw: …` — a line arrived but did not parse; paste that PuTTY line
-   - `Arduino silent — reflash Nano` — plug the Nano into the PC, upload [arduino/canopy_nano.ino](https://github.com/jacoblackner1/canopy-station/blob/main/arduino/canopy_nano.ino), plug it back into the Pi, restart the dashboard
-   - `no Arduino` — USB serial not found (`/dev/ttyUSB0` or `/dev/ttyACM0`)
-3. In PuTTY you should see `sensor raw …`. If you only see `Arduino silent`, it is the sketch, not the Pi.
+   - `raw 497 / 548` — sensors are live
+   - `saw: …` — a line arrived but did not parse
+   - `Arduino silent — reflash Nano` — upload [arduino/canopy_nano.ino](https://github.com/jacoblackner1/canopy-station/blob/main/arduino/canopy_nano.ino)
+   - `no Arduino` — USB serial not found
 
 ## Auto rules
 
@@ -80,6 +100,6 @@ The buttons only write to the Nano. The meters need the Nano to **print** `MOIST
 - Every **5 minutes**, if soil is below that plant type’s low mark, pulse once
 - If light is below **40%**, turn the grow lamp on
 - Plant type from green cover: lush > 45%, standard > 25%, else succulent
-- Auto water / lamp **wait** until a real sensor line has been parsed (so 0% at boot does not dump water)
+- Auto water / lamp **wait** until a real sensor line has been parsed
 
 Manual Water / Lamp buttons still work anytime.

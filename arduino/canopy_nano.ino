@@ -6,8 +6,8 @@
   setup() holds D8 LOW so the 120V pump stays off at boot.
   Cut hot only. COM + NO. Leave NC empty.
 
-  analogRead is 0–1023. We map that to 0–100 so the Pi calibration
-  (moisture dry 49 / wet 21, light dark 73 / daylight 10) matches.
+  Prints analogRead 0–1023. The Pi maps that to % using station.json
+  (probe in air = moistureDry, probe in water = moistureWet).
 */
 
 const int PIN_MOISTURE = A0;
@@ -61,8 +61,8 @@ void loop() {
     }
   }
 
-  int moisture = map(readAvg(PIN_MOISTURE), 0, 1023, 0, 100);
-  int light = map(readAvg(PIN_LIGHT), 0, 1023, 0, 100);
+  int moisture = readAvg(PIN_MOISTURE);
+  int light = readAvg(PIN_LIGHT);
   Serial.print("MOISTURE:");
   Serial.print(moisture);
   Serial.print("|LIGHT:");

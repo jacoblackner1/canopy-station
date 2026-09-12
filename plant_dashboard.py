@@ -3,6 +3,10 @@
 
 800×480 HDMI kiosk. LAN only — do not port-forward.
 Pump relay is inverted: HIGH = on. Default OFF at start.
+
+Moisture/light use the Nano analogRead scale (0–1023). Calibrate in
+station.json: probe in air → moistureDry, probe in water → moistureWet.
+Capacitive probes read HIGH when dry and LOW when wet.
 """
 
 from __future__ import annotations
@@ -22,11 +26,13 @@ from flask import Flask, Response, jsonify, request
 ROOT = Path(__file__).resolve().parent
 CFG_PATH = ROOT / "station.json"
 
+# 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
+# Typical capacitive: air ~550–700, water ~220–320.
 DEFAULTS = {
-    "moistureDry": 49,
-    "moistureWet": 21,
-    "lightDark": 73,
-    "lightDay": 10,
+    "moistureDry": 600,
+    "moistureWet": 250,
+    "lightDark": 750,
+    "lightDay": 120,
     "autoSeconds": 300,
     "waterPulseMs": 1000,
     "lightOnBelow": 40,
@@ -57,7 +63,14 @@ def load_cfg() -> dict:
     return cfg
 
 
+def save_cfg(cfg: dict) -> None:
+    out = dict(DEFAULTS)
+    out.update(cfg)
+    CFG_PATH.write_text(json.dumps(out, indent=2) + "\n")
+
+
 CFG = load_cfg()
+CFG_MTIME = CFG_PATH.stat().st_mtime if CFG_PATH.exists() else 0.0
 LOCK = threading.Lock()
 SER = None
 CAP = None
@@ -83,18 +96,21 @@ STATE = {
 }
 
 
-def fold_adc(raw: int) -> int:
-    """Map 10/12-bit ADC counts onto the 0–100 scale used in station.json.
-
-    Dry 49 / wet 21 were calibrated on that 0–100 scale. A Nano still printing
-    analogRead() (0–1023) would otherwise clamp every bar to 0%.
-    """
-    a = abs(int(raw))
-    if a > 2048:
-        return int(round(raw * 100.0 / 4095.0))
-    if a > 120:
-        return int(round(raw * 100.0 / 1023.0))
-    return int(raw)
+def maybe_reload_cfg() -> None:
+    global CFG, CFG_MTIME
+    try:
+        mtime = CFG_PATH.stat().st_mtime
+    except OSError:
+        return
+    if mtime == CFG_MTIME:
+        return
+    CFG_MTIME = mtime
+    CFG = load_cfg()
+    print(
+        f"reloaded station.json dry {CFG['moistureDry']} wet {CFG['moistureWet']} "
+        f"dark {CFG['lightDark']} day {CFG['lightDay']}",
+        flush=True,
+    )
 
 
 def scale_inverted(raw, dry, wet) -> float:
@@ -174,8 +190,7 @@ def find_camera():
 def parse_line(line: str):
     if not line:
         return None
-    compact = line.replace(" ", "")
-    m = LINE_RE.search(compact)
+    m = LINE_RE.search(line.replace(" ", ""))
     if m and m.group(1) is not None and m.group(2) is not None:
         return int(float(m.group(1))), int(float(m.group(2)))
     if "MOISTURE:" in line.upper() and "LIGHT" in line.upper():
@@ -232,6 +247,12 @@ def analyze(frame) -> tuple[float, float, float]:
     return g, y, dark
 
 
+def apply_raw(m_raw: int, l_raw: int) -> tuple[float, float]:
+    moisture = scale_inverted(m_raw, CFG["moistureDry"], CFG["moistureWet"])
+    light = scale_inverted(l_raw, CFG["lightDark"], CFG["lightDay"])
+    return moisture, light
+
+
 def serial_loop() -> None:
     global SER
     while True:
@@ -277,10 +298,7 @@ def serial_loop() -> None:
                         logged += 1
                     continue
                 m_raw, l_raw = parsed
-                m_fold = fold_adc(m_raw)
-                l_fold = fold_adc(l_raw)
-                moisture = scale_inverted(m_fold, CFG["moistureDry"], CFG["moistureWet"])
-                light = scale_inverted(l_fold, CFG["lightDark"], CFG["lightDay"])
+                moisture, light = apply_raw(m_raw, l_raw)
                 with LOCK:
                     STATE["moisture_raw"] = m_raw
                     STATE["light_raw"] = l_raw
@@ -290,9 +308,9 @@ def serial_loop() -> None:
                 refresh_status()
                 if logged < 8:
                     print(
-                        f"sensor raw {m_raw}/{l_raw} "
-                        f"(fold {m_fold}/{l_fold}) -> "
-                        f"moisture {moisture:.1f}% light {light:.1f}%",
+                        f"sensor raw {m_raw}/{l_raw} -> "
+                        f"moisture {moisture:.1f}% light {light:.1f}%  "
+                        f"(cal dry {CFG['moistureDry']} wet {CFG['moistureWet']})",
                         flush=True,
                     )
                     logged += 1
@@ -312,6 +330,7 @@ def serial_loop() -> None:
 def auto_loop() -> None:
     while True:
         time.sleep(1)
+        maybe_reload_cfg()
         now = time.time()
         with LOCK:
             last = STATE["last_auto"]
@@ -414,6 +433,8 @@ def status():
             "light_raw": s["light_raw"],
             "last_line": s["last_line"],
             "sensors_ok": s["sensors_ok"],
+            "moisture_dry": CFG["moistureDry"],
+            "moisture_wet": CFG["moistureWet"],
         }
     )
 
@@ -432,9 +453,48 @@ def light():
     return jsonify({"ok": True, "lamp": on})
 
 
+@app.post("/calibrate/<kind>")
+def calibrate(kind: str):
+    """Store the current analog reading as air (dry) or water (wet)."""
+    mapping = {
+        "air": "moistureDry",
+        "water": "moistureWet",
+        "dark": "lightDark",
+        "day": "lightDay",
+        "moistureDry": "moistureDry",
+        "moistureWet": "moistureWet",
+    }
+    key = mapping.get(kind)
+    if key is None:
+        return jsonify({"ok": False, "error": "unknown kind"}), 400
+    with LOCK:
+        raw = STATE["moisture_raw"] if key.startswith("moisture") else STATE["light_raw"]
+        if raw is None:
+            return jsonify({"ok": False, "error": "no sensor reading yet"}), 400
+        CFG[key] = int(raw)
+        dry, wet = CFG["moistureDry"], CFG["moistureWet"]
+        m_raw, l_raw = STATE["moisture_raw"], STATE["light_raw"]
+    if key.startswith("moisture") and dry == wet:
+        return jsonify({"ok": False, "error": "air and water cannot be the same"}), 400
+    save_cfg(CFG)
+    global CFG_MTIME
+    try:
+        CFG_MTIME = CFG_PATH.stat().st_mtime
+    except OSError:
+        pass
+    if m_raw is not None and l_raw is not None:
+        moisture, light = apply_raw(int(m_raw), int(l_raw))
+        with LOCK:
+            STATE["moisture"] = moisture
+            STATE["light"] = light
+        refresh_status()
+    print(f"calibrated {key} = {raw}", flush=True)
+    return jsonify({"ok": True, "key": key, "raw": int(raw), "dry": CFG["moistureDry"], "wet": CFG["moistureWet"]})
+
+
 @app.after_request
-def no_store_status(resp):
-    if request.path == "/status":
+def no_store(resp):
+    if request.path in ("/status", "/"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
