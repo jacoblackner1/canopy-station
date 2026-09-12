@@ -49,6 +49,8 @@ Dashboard is at `http://<pi-lan-ip>:5000/` on the home network. Chromium kiosk u
 
 ## After I push an update
 
+Stop the running dashboard (Ctrl+C in that PuTTY window), then:
+
 ```bash
 cd ~/canopy-station
 git pull
@@ -56,13 +58,28 @@ source ~/home_sentinel/sentinel_env/bin/activate
 python3 plant_dashboard.py
 ```
 
+Watch for `Arduino on /dev/ttyUSB0` and `sensor raw … -> moisture …% light …%`. Refresh the kiosk (or rerun `./scripts/start_kiosk.sh`).
+
 Your calibration lives in `station.json` (air 49 / water 21, dark 73 / daylight 10). Edit that file rather than the Python if a number changes.
 
-## Auto rules (same as the working station)
+## If pump / lamp work but moisture and light stay blank
+
+The buttons only write to the Nano. The meters need the Nano to **print** `MOISTURE:n|LIGHT:n` and the dashboard to keep `/status` answering while the camera is streaming.
+
+1. `git pull` and restart `python3 plant_dashboard.py` (this update).
+2. Bottom-right of the kiosk now says one of:
+   - `raw 38 / 52` — sensors are live
+   - `saw: …` — a line arrived but did not parse; paste that PuTTY line
+   - `Arduino silent — reflash Nano` — plug the Nano into the PC, upload [arduino/canopy_nano.ino](https://github.com/jacoblackner1/canopy-station/blob/main/arduino/canopy_nano.ino), plug it back into the Pi, restart the dashboard
+   - `no Arduino` — USB serial not found (`/dev/ttyUSB0` or `/dev/ttyACM0`)
+3. In PuTTY you should see `sensor raw …`. If you only see `Arduino silent`, it is the sketch, not the Pi.
+
+## Auto rules
 
 - Water pulse is **1 second**
 - Every **5 minutes**, if soil is below that plant type’s low mark, pulse once
 - If light is below **40%**, turn the grow lamp on
 - Plant type from green cover: lush > 45%, standard > 25%, else succulent
+- Auto water / lamp **wait** until a real sensor line has been parsed (so 0% at boot does not dump water)
 
 Manual Water / Lamp buttons still work anytime.

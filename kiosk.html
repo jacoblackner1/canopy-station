@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=800, height=480, initial-scale=1, user-scalable=no"/>
 <title>Canopy</title>
 <style>
-  @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600&display=swap");
   :root {
     --bg: #0c0f0c; --surface: #151a15; --surface-2: #1c231c;
     --fg: #e8eee6; --muted: #8a9386; --subtle: #5e675b;
@@ -16,15 +15,15 @@
   html, body {
     width: 800px; height: 480px; margin: 0; overflow: hidden;
     background: var(--bg); color: var(--fg);
-    font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    font-family: "Segoe UI", system-ui, sans-serif;
   }
   .stage { display: flex; flex-direction: column; width: 800px; height: 480px; }
   header {
     height: 32px; display: flex; align-items: center; justify-content: space-between;
     padding: 0 10px 0 12px; background: var(--surface); flex-shrink: 0;
   }
-  header .brand { font-family: Fraunces, "Times New Roman", serif; font-size: 14px; margin: 0; }
-  header .clock { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+  header .brand { font-family: Georgia, "Times New Roman", serif; font-size: 14px; margin: 0; }
+  header .clock { font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 12px; color: var(--muted); }
   .body { display: flex; flex: 1; min-height: 0; }
   .cam { position: relative; flex: 1; min-width: 0; background: var(--surface); }
   .cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -48,22 +47,22 @@
   .flag.lamp { background: var(--warn); color: #1a140c; }
   .plant {
     position: absolute; left: 8px; bottom: 8px;
-    font-family: Fraunces, serif; font-size: 18px; margin: 0; line-height: 1.15;
+    font-family: Georgia, serif; font-size: 18px; margin: 0; line-height: 1.15;
   }
   aside {
     width: 240px; flex-shrink: 0; background: var(--surface);
     display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px;
   }
   .k { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
-  .status { font-family: Fraunces, serif; font-size: 18px; line-height: 1.15; margin: 0; }
+  .status { font-family: Georgia, serif; font-size: 18px; line-height: 1.15; margin: 0; }
   .status.ok { color: var(--ok); }
   .status.warn { color: var(--warn); }
   .status.alert { color: var(--alert); }
+  .status.muted { color: var(--muted); }
   .sub { font-size: 12px; color: var(--muted); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .meter { }
   .meter .row { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
   .meter .lab { letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-  .meter .val { font-family: "IBM Plex Mono", monospace; }
+  .meter .val { font-family: ui-monospace, monospace; }
   .meter .val.warn { color: var(--warn); }
   .bar { position: relative; height: 4px; border-radius: 99px; background: var(--surface-2); margin-top: 4px; overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 99px; }
@@ -72,7 +71,7 @@
   .actions { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
   button {
     height: 36px; border: 0; border-radius: 8px; cursor: pointer;
-    font: 500 13px "Source Sans 3", system-ui, sans-serif;
+    font: 500 13px "Segoe UI", system-ui, sans-serif;
     display: flex; align-items: center; justify-content: center;
   }
   button:disabled { opacity: .4; cursor: default; }
@@ -81,7 +80,8 @@
     background: transparent; color: var(--fg);
     box-shadow: 0 0 0 1px rgba(232,238,230,.14);
   }
-  .next { text-align: center; font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted); margin: 0; }
+  .next { text-align: center; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); margin: 0; }
+  .raw { text-align: center; font-family: ui-monospace, monospace; font-size: 10px; color: var(--subtle); margin: 0; }
 </style>
 </head>
 <body>
@@ -102,7 +102,7 @@
     <aside>
       <div>
         <p class="k">Status</p>
-        <p class="status ok" id="status">Waiting</p>
+        <p class="status muted" id="status">Waiting</p>
         <p class="sub" id="profile">—</p>
       </div>
       <div class="meter" id="m-moist"></div>
@@ -113,45 +113,80 @@
         <button class="go" id="water" type="button">Water 1s</button>
         <button class="ghost" id="lamp" type="button">Lamp on</button>
         <p class="next" id="next">Auto --:--</p>
+        <p class="raw" id="raw">sensors —</p>
       </div>
     </aside>
   </div>
 </div>
 <script>
-function meter(el, label, value, low, high) {
-  const warn = (low != null && value < low) || (high != null && value > high);
-  const marks = (low != null ? `<span class="m" style="left:${low}%"></span>` : "")
-    + (high != null ? `<span class="m" style="left:${high}%"></span>` : "");
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function meter(el, label, value, low, high, ready) {
+  if (!el) return;
+  if (!ready) {
+    el.innerHTML = `<div class="row"><span class="lab">${label}</span>
+      <span class="val">—</span></div>
+      <div class="bar"><i style="width:2%"></i></div>`;
+    return;
+  }
+  const n = num(value);
+  const lo = low == null ? null : num(low);
+  const hi = high == null ? null : num(high);
+  const warn = (lo != null && n < lo) || (hi != null && n > hi);
+  const marks = (lo != null ? `<span class="m" style="left:${lo}%"></span>` : "")
+    + (hi != null ? `<span class="m" style="left:${hi}%"></span>` : "");
   el.innerHTML = `<div class="row"><span class="lab">${label}</span>
-    <span class="val ${warn ? "warn" : ""}">${value.toFixed(1)}%</span></div>
-    <div class="bar ${warn ? "warn" : ""}"><i style="width:${Math.max(2, Math.min(100, value))}%"></i>${marks}</div>`;
+    <span class="val ${warn ? "warn" : ""}">${n.toFixed(1)}%</span></div>
+    <div class="bar ${warn ? "warn" : ""}"><i style="width:${Math.max(2, Math.min(100, n))}%"></i>${marks}</div>`;
 }
 function tickClock() {
   document.getElementById("clock").textContent = new Date().toLocaleTimeString();
 }
 async function refresh() {
-  const s = await fetch("/status").then(r => r.json());
-  document.getElementById("status").textContent = s.status;
-  document.getElementById("status").className = "status " + s.status_tone;
-  document.getElementById("profile").textContent = s.profile;
-  document.getElementById("plant").textContent = s.profile;
-  meter(document.getElementById("m-moist"), "Moisture", s.moisture, s.low, s.high);
-  meter(document.getElementById("m-light"), "Light", s.light, 40, null);
-  meter(document.getElementById("m-green"), "Green", s.green * 100, 25, null);
-  meter(document.getElementById("m-yellow"), "Yellow", s.yellow * 100, null, 15);
-  document.getElementById("pulse").hidden = !s.pump;
-  document.getElementById("lampFlag").hidden = !s.lamp || s.pump;
-  const lampBtn = document.getElementById("lamp");
-  lampBtn.textContent = s.lamp ? "Lamp off" : "Lamp on";
-  lampBtn.className = s.lamp ? "go" : "ghost";
-  document.getElementById("water").disabled = s.pump;
-  const remain = Math.max(0, Math.floor(s.auto_in));
-  const mm = Math.floor(remain / 60);
-  const ss = String(remain % 60).padStart(2, "0");
-  document.getElementById("next").textContent = "Auto " + mm + ":" + ss;
+  try {
+    const res = await fetch("/status", { cache: "no-store" });
+    const s = await res.json();
+    const ready = !!s.sensors_ok;
+    document.getElementById("status").textContent = s.status || "Waiting";
+    document.getElementById("status").className = "status " + (s.status_tone || "muted");
+    document.getElementById("profile").textContent = s.profile || "—";
+    document.getElementById("plant").textContent = s.profile || "—";
+    meter(document.getElementById("m-moist"), "Moisture", s.moisture, s.low, s.high, ready);
+    meter(document.getElementById("m-light"), "Light", s.light, 40, null, ready);
+    meter(document.getElementById("m-green"), "Green", num(s.green) * 100, 25, null, true);
+    meter(document.getElementById("m-yellow"), "Yellow", num(s.yellow) * 100, null, 15, true);
+    document.getElementById("pulse").hidden = !s.pump;
+    document.getElementById("lampFlag").hidden = !s.lamp || s.pump;
+    const lampBtn = document.getElementById("lamp");
+    lampBtn.textContent = s.lamp ? "Lamp off" : "Lamp on";
+    lampBtn.className = s.lamp ? "go" : "ghost";
+    document.getElementById("water").disabled = !!s.pump;
+    const remain = Math.max(0, Math.floor(num(s.auto_in)));
+    const mm = Math.floor(remain / 60);
+    const ss = String(remain % 60).padStart(2, "0");
+    document.getElementById("next").textContent = "Auto " + mm + ":" + ss;
+    const rawEl = document.getElementById("raw");
+    if (ready) {
+      rawEl.textContent = "raw " + s.moisture_raw + " / " + s.light_raw;
+    } else if (s.last_line) {
+      rawEl.textContent = "saw: " + s.last_line;
+    } else if (s.serial) {
+      rawEl.textContent = "Arduino silent — reflash Nano";
+    } else {
+      rawEl.textContent = "no Arduino";
+    }
+  } catch (err) {
+    document.getElementById("raw").textContent = "status error";
+  }
 }
 document.getElementById("water").onclick = () => fetch("/water", { method: "POST" });
 document.getElementById("lamp").onclick = () => fetch("/light", { method: "POST" });
+meter(document.getElementById("m-moist"), "Moisture", 0, 40, 70, false);
+meter(document.getElementById("m-light"), "Light", 0, 40, null, false);
+meter(document.getElementById("m-green"), "Green", 0, 25, null, true);
+meter(document.getElementById("m-yellow"), "Yellow", 0, null, 15, true);
 tickClock();
 refresh();
 setInterval(tickClock, 1000);

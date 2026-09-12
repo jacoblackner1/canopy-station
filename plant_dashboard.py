@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -16,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import serial
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 
 ROOT = Path(__file__).resolve().parent
 CFG_PATH = ROOT / "station.json"
@@ -39,6 +40,12 @@ PROFILES = (
     {"id": "succulent", "label": "Succulent / low-water", "low": 20, "high": 50, "green": 0.0},
 )
 
+LINE_RE = re.compile(
+    r"moisture[^0-9\-]*(-?\d+(?:\.\d+)?).*light[^0-9\-]*(-?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+PAIR_RE = re.compile(r"(-?\d+(?:\.\d+)?)\s*[|:,]\s*(-?\d+(?:\.\d+)?)")
+
 
 def load_cfg() -> dict:
     cfg = dict(DEFAULTS)
@@ -54,6 +61,7 @@ CFG = load_cfg()
 LOCK = threading.Lock()
 SER = None
 CAP = None
+JPEG = None
 STATE = {
     "moisture_raw": None,
     "light_raw": None,
@@ -70,7 +78,23 @@ STATE = {
     "camera": None,
     "serial": None,
     "last_auto": 0.0,
+    "last_line": "",
+    "sensors_ok": False,
 }
+
+
+def fold_adc(raw: int) -> int:
+    """Map 10/12-bit ADC counts onto the 0–100 scale used in station.json.
+
+    Dry 49 / wet 21 were calibrated on that 0–100 scale. A Nano still printing
+    analogRead() (0–1023) would otherwise clamp every bar to 0%.
+    """
+    a = abs(int(raw))
+    if a > 2048:
+        return int(round(raw * 100.0 / 4095.0))
+    if a > 120:
+        return int(round(raw * 100.0 / 1023.0))
+    return int(raw)
 
 
 def scale_inverted(raw, dry, wet) -> float:
@@ -88,7 +112,9 @@ def classify(green: float) -> dict:
     return PROFILES[2]
 
 
-def health(green: float, moisture: float, profile: dict) -> tuple[str, str]:
+def health(green: float, moisture: float, profile: dict, sensors_ok: bool) -> tuple[str, str]:
+    if not sensors_ok:
+        return "Waiting for sensors", "muted"
     if green < 0.22:
         return "Thinning", "alert"
     if moisture < profile["low"]:
@@ -98,14 +124,34 @@ def health(green: float, moisture: float, profile: dict) -> tuple[str, str]:
     return "In range", "ok"
 
 
+def refresh_status() -> None:
+    with LOCK:
+        green = STATE["green"]
+        moisture = STATE["moisture"]
+        sensors_ok = STATE["sensors_ok"]
+        profile = classify(green)
+        short, tone = health(green, moisture, profile, sensors_ok)
+        STATE["profile"] = profile["label"]
+        STATE["status"] = short
+        STATE["status_tone"] = tone
+
+
 def find_serial():
     for path in ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1"):
         if os.path.exists(path):
             try:
-                ser = serial.Serial(path, 9600, timeout=1)
+                ser = serial.Serial(
+                    path,
+                    9600,
+                    timeout=1,
+                    dsrdtr=False,
+                    rtscts=False,
+                )
+                time.sleep(2.0)
                 ser.reset_input_buffer()
                 return ser, path
-            except Exception:
+            except Exception as exc:
+                print(f"serial {path} failed: {exc}", flush=True)
                 continue
     return None, None
 
@@ -126,14 +172,23 @@ def find_camera():
 
 
 def parse_line(line: str):
-    if "MOISTURE:" not in line:
+    if not line:
         return None
-    try:
-        rest = line.split("MOISTURE:", 1)[1]
-        moist_s, light_s = rest.split("|LIGHT:", 1)
-        return int(float(moist_s.strip())), int(float(light_s.strip()))
-    except Exception:
-        return None
+    compact = line.replace(" ", "")
+    m = LINE_RE.search(compact)
+    if m and m.group(1) is not None and m.group(2) is not None:
+        return int(float(m.group(1))), int(float(m.group(2)))
+    if "MOISTURE:" in line.upper() and "LIGHT" in line.upper():
+        try:
+            rest = re.split(r"moisture:", line, flags=re.I)[1]
+            moist_s, light_s = re.split(r"\|?\s*light:", rest, maxsplit=1, flags=re.I)
+            return int(float(moist_s.strip())), int(float(light_s.strip()))
+        except Exception:
+            pass
+    m = PAIR_RE.search(line)
+    if m:
+        return int(float(m.group(1))), int(float(m.group(2)))
+    return None
 
 
 def send(cmd: str) -> None:
@@ -142,8 +197,9 @@ def send(cmd: str) -> None:
         return
     try:
         ser.write((cmd + "\n").encode("ascii"))
-    except Exception:
-        pass
+        ser.flush()
+    except Exception as exc:
+        print(f"serial write failed: {exc}", flush=True)
 
 
 def water_pulse() -> None:
@@ -168,7 +224,7 @@ def analyze(frame) -> tuple[float, float, float]:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     green = cv2.inRange(hsv, (35, 40, 40), (85, 255, 255))
     yellow = cv2.inRange(hsv, (15, 40, 40), (34, 255, 255))
-    pixels = frame.shape[0] * frame.shape[1]
+    pixels = max(1, frame.shape[0] * frame.shape[1])
     g = float(np.count_nonzero(green)) / pixels
     y = float(np.count_nonzero(yellow)) / pixels
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -178,33 +234,79 @@ def analyze(frame) -> tuple[float, float, float]:
 
 def serial_loop() -> None:
     global SER
-    ser, path = find_serial()
-    SER = ser
-    with LOCK:
-        STATE["serial"] = path
-    if ser is None:
-        print("No Arduino serial port found")
-        return
-    print(f"Arduino on {path}")
-    send("WATER_OFF")
-    send("LIGHT_OFF")
     while True:
-        try:
-            raw = ser.readline().decode("utf-8", errors="ignore").strip()
-        except Exception:
-            time.sleep(0.2)
-            continue
-        parsed = parse_line(raw)
-        if not parsed:
-            continue
-        m_raw, l_raw = parsed
-        moisture = scale_inverted(m_raw, CFG["moistureDry"], CFG["moistureWet"])
-        light = scale_inverted(l_raw, CFG["lightDark"], CFG["lightDay"])
+        ser, path = find_serial()
+        SER = ser
         with LOCK:
-            STATE["moisture_raw"] = m_raw
-            STATE["light_raw"] = l_raw
-            STATE["moisture"] = moisture
-            STATE["light"] = light
+            STATE["serial"] = path
+            if ser is None:
+                STATE["sensors_ok"] = False
+                STATE["last_line"] = ""
+        if ser is None:
+            print("No Arduino serial port found — retrying in 4s", flush=True)
+            time.sleep(4)
+            continue
+        print(f"Arduino on {path}", flush=True)
+        send("WATER_OFF")
+        send("LIGHT_OFF")
+        logged = 0
+        silent_since = time.time()
+        try:
+            while True:
+                try:
+                    raw = ser.readline().decode("utf-8", errors="ignore").strip()
+                except Exception as exc:
+                    print(f"serial read failed: {exc}", flush=True)
+                    break
+                if not raw:
+                    if time.time() - silent_since > 8 and logged < 3:
+                        print(
+                            "Arduino silent — no sensor lines. "
+                            "Reflash arduino/canopy_nano.ino then plug the Nano back into the Pi.",
+                            flush=True,
+                        )
+                        logged += 1
+                    continue
+                silent_since = time.time()
+                with LOCK:
+                    STATE["last_line"] = raw[:80]
+                parsed = parse_line(raw)
+                if not parsed:
+                    if logged < 12:
+                        print(f"unparsed serial: {raw!r}", flush=True)
+                        logged += 1
+                    continue
+                m_raw, l_raw = parsed
+                m_fold = fold_adc(m_raw)
+                l_fold = fold_adc(l_raw)
+                moisture = scale_inverted(m_fold, CFG["moistureDry"], CFG["moistureWet"])
+                light = scale_inverted(l_fold, CFG["lightDark"], CFG["lightDay"])
+                with LOCK:
+                    STATE["moisture_raw"] = m_raw
+                    STATE["light_raw"] = l_raw
+                    STATE["moisture"] = moisture
+                    STATE["light"] = light
+                    STATE["sensors_ok"] = True
+                refresh_status()
+                if logged < 8:
+                    print(
+                        f"sensor raw {m_raw}/{l_raw} "
+                        f"(fold {m_fold}/{l_fold}) -> "
+                        f"moisture {moisture:.1f}% light {light:.1f}%",
+                        flush=True,
+                    )
+                    logged += 1
+        finally:
+            try:
+                ser.close()
+            except Exception:
+                pass
+            SER = None
+            with LOCK:
+                STATE["serial"] = None
+                STATE["sensors_ok"] = False
+            print("Arduino serial closed — reconnecting", flush=True)
+            time.sleep(2)
 
 
 def auto_loop() -> None:
@@ -217,6 +319,7 @@ def auto_loop() -> None:
             light = STATE["light"]
             green = STATE["green"]
             lamp = STATE["lamp"]
+            sensors_ok = STATE["sensors_ok"]
         if last == 0:
             with LOCK:
                 STATE["last_auto"] = now
@@ -225,6 +328,8 @@ def auto_loop() -> None:
             continue
         with LOCK:
             STATE["last_auto"] = now
+        if not sensors_ok:
+            continue
         profile = classify(green)
         if moisture < profile["low"]:
             threading.Thread(target=water_pulse, daemon=True).start()
@@ -232,34 +337,41 @@ def auto_loop() -> None:
             set_lamp(True)
 
 
-def gen_frames(cap):
+def capture_loop(cap) -> None:
+    global JPEG
     while True:
         ok, frame = cap.read()
         if not ok:
             time.sleep(0.05)
             continue
         g, y, d = analyze(frame)
-        profile = classify(g)
         with LOCK:
-            moisture = STATE["moisture"]
-            short, tone = health(g, moisture, profile)
             STATE["green"] = g
             STATE["yellow"] = y
             STATE["dark"] = d
-            STATE["profile"] = profile["label"]
-            STATE["status"] = short
-            STATE["status_tone"] = tone
+        refresh_status()
         _, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        JPEG = jpg.tobytes()
+        time.sleep(0.04)
+
+
+def gen_frames():
+    while True:
+        frame = JPEG
+        if frame is None:
+            time.sleep(0.05)
+            continue
         yield (
-            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
         )
+        time.sleep(0.08)
 
 
 app = Flask(__name__)
 
+
 def load_page() -> str:
     return (ROOT / "kiosk.html").read_text()
-
 
 
 @app.get("/")
@@ -269,10 +381,9 @@ def home():
 
 @app.get("/video")
 def video():
-    cap = CAP
-    if cap is None:
+    if CAP is None and JPEG is None:
         return "No camera", 503
-    return Response(gen_frames(cap), mimetype="multipart/x-mixed-replace; boundary=frame")
+    return Response(gen_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.get("/status")
@@ -284,13 +395,13 @@ def status():
     auto_in = max(0.0, CFG["autoSeconds"] - (time.time() - last))
     return jsonify(
         {
-            "moisture": s["moisture"],
-            "light": s["light"],
-            "green": s["green"],
-            "yellow": s["yellow"],
-            "dark": s["dark"],
-            "pump": s["pump"],
-            "lamp": s["lamp"],
+            "moisture": float(s["moisture"]),
+            "light": float(s["light"]),
+            "green": float(s["green"]),
+            "yellow": float(s["yellow"]),
+            "dark": float(s["dark"]),
+            "pump": bool(s["pump"]),
+            "lamp": bool(s["lamp"]),
             "profile": s["profile"],
             "status": s["status"],
             "status_tone": s["status_tone"],
@@ -301,6 +412,8 @@ def status():
             "auto_in": auto_in,
             "moisture_raw": s["moisture_raw"],
             "light_raw": s["light_raw"],
+            "last_line": s["last_line"],
+            "sensors_ok": s["sensors_ok"],
         }
     )
 
@@ -319,6 +432,13 @@ def light():
     return jsonify({"ok": True, "lamp": on})
 
 
+@app.after_request
+def no_store_status(resp):
+    if request.path == "/status":
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def main() -> None:
     global CAP
     cap, cam_idx = find_camera()
@@ -326,16 +446,23 @@ def main() -> None:
     with LOCK:
         STATE["camera"] = cam_idx
     if cap is None:
-        print("No camera found on /dev/video0-2")
+        print("No camera found on /dev/video0-2", flush=True)
     else:
-        print(f"Camera index {cam_idx}")
+        print(f"Camera index {cam_idx}", flush=True)
+        threading.Thread(target=capture_loop, args=(cap,), daemon=True).start()
     threading.Thread(target=serial_loop, daemon=True).start()
     threading.Thread(target=auto_loop, daemon=True).start()
     print(
         f"Canopy kiosk on http://127.0.0.1:{CFG['flaskPort']}/  "
-        "(LAN bind, do not port-forward)"
+        "(LAN bind, do not port-forward)",
+        flush=True,
     )
-    app.run(host=CFG["flaskHost"], port=CFG["flaskPort"], threaded=True)
+    app.run(
+        host=CFG["flaskHost"],
+        port=CFG["flaskPort"],
+        threaded=True,
+        use_reloader=False,
+    )
 
 
 if __name__ == "__main__":
