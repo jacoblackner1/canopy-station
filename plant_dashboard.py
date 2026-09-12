@@ -36,6 +36,7 @@ DEFAULTS = {
     "autoSeconds": 300,
     "waterPulseMs": 1000,
     "lightOnBelow": 40,
+    "lampMoistDelta": 0,
     "flaskHost": "0.0.0.0",
     "flaskPort": 5000,
 }
@@ -64,9 +65,14 @@ def load_cfg() -> dict:
 
 
 def save_cfg(cfg: dict) -> None:
+    global CFG_MTIME
     out = dict(DEFAULTS)
     out.update(cfg)
     CFG_PATH.write_text(json.dumps(out, indent=2) + "\n")
+    try:
+        CFG_MTIME = CFG_PATH.stat().st_mtime
+    except OSError:
+        pass
 
 
 CFG = load_cfg()
@@ -93,7 +99,11 @@ STATE = {
     "last_auto": 0.0,
     "last_line": "",
     "sensors_ok": False,
+    "lamp_delta": 0,
 }
+
+# Learned when the lamp toggles: analog jump that is electrical, not soil.
+LAMP_EDGE = {"at": 0.0, "before": None, "turning_on": False, "learned": False}
 
 
 def maybe_reload_cfg() -> None:
@@ -230,9 +240,16 @@ def water_pulse() -> None:
 
 
 def set_lamp(on: bool) -> None:
-    send("LIGHT_ON" if on else "LIGHT_OFF")
     with LOCK:
+        already = bool(STATE["lamp"])
+        before = STATE["moisture_raw"]
         STATE["lamp"] = on
+        if already != on:
+            LAMP_EDGE["at"] = time.time()
+            LAMP_EDGE["before"] = before
+            LAMP_EDGE["turning_on"] = on
+            LAMP_EDGE["learned"] = False
+    send("LIGHT_ON" if on else "LIGHT_OFF")
 
 
 def analyze(frame) -> tuple[float, float, float]:
@@ -251,6 +268,49 @@ def apply_raw(m_raw: int, l_raw: int) -> tuple[float, float]:
     moisture = scale_inverted(m_raw, CFG["moistureDry"], CFG["moistureWet"])
     light = scale_inverted(l_raw, CFG["lightDark"], CFG["lightDay"])
     return moisture, light
+
+
+def compensate_moisture(m_raw: int) -> int:
+    """Remove the DC jump that appears when the grow lamp loads the 5V rail / EMI."""
+    with LOCK:
+        lamp = bool(STATE["lamp"])
+        pump = bool(STATE["pump"])
+        at = LAMP_EDGE["at"]
+        before = LAMP_EDGE["before"]
+        turning_on = LAMP_EDGE["turning_on"]
+        learned = LAMP_EDGE["learned"]
+    delta = int(CFG.get("lampMoistDelta") or 0)
+    now = time.time()
+    age = now - at if at else 999.0
+
+    if at and age < 0.45:
+        with LOCK:
+            STATE["lamp_delta"] = delta
+        if before is not None:
+            return int(before)
+        return m_raw
+
+    if at and (not learned) and 0.45 <= age <= 1.8 and before is not None and not pump:
+        sample = m_raw - int(before)
+        new_delta = sample if turning_on else -sample
+        if 8 <= abs(new_delta) <= 180:
+            blended = int(round(0.45 * delta + 0.55 * new_delta)) if delta else int(new_delta)
+            CFG["lampMoistDelta"] = blended
+            save_cfg(CFG)
+            delta = blended
+            print(
+                f"lamp moisture offset {blended} adc "
+                f"(edge {new_delta:+d}, before {before} now {m_raw})",
+                flush=True,
+            )
+        with LOCK:
+            LAMP_EDGE["learned"] = True
+            STATE["lamp_delta"] = delta
+
+    used = m_raw - delta if lamp and delta else m_raw
+    with LOCK:
+        STATE["lamp_delta"] = delta if lamp else 0
+    return used
 
 
 def serial_loop() -> None:
@@ -298,7 +358,14 @@ def serial_loop() -> None:
                         logged += 1
                     continue
                 m_raw, l_raw = parsed
-                moisture, light = apply_raw(m_raw, l_raw)
+                with LOCK:
+                    pumping = bool(STATE["pump"])
+                    prev_raw = STATE["moisture_raw"]
+                if pumping and prev_raw is not None:
+                    m_used = prev_raw
+                else:
+                    m_used = compensate_moisture(m_raw)
+                moisture, light = apply_raw(m_used, l_raw)
                 with LOCK:
                     STATE["moisture_raw"] = m_raw
                     STATE["light_raw"] = l_raw
@@ -435,6 +502,7 @@ def status():
             "sensors_ok": s["sensors_ok"],
             "moisture_dry": CFG["moistureDry"],
             "moisture_wet": CFG["moistureWet"],
+            "lamp_delta": int(s.get("lamp_delta") or 0),
         }
     )
 

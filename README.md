@@ -83,7 +83,19 @@ Your old `49 / 21` values were on a 0–100 scale, so a real reading of ~497 loo
 
 Replace 600 with the air number and 250 with the water number (water must be the smaller one). Save. The dashboard reloads this file on its own.
 
-Light uses the same inverted scale (`lightDark` in a dark room, `lightDay` in daylight).
+Light uses the same inverted scale (`lightDark` in a dark room, `lightDay` in daylight). Calibrate moisture with the **lamp off**.
+
+## Lamp makes moisture jump
+
+Capacitive probes sit on the same 5V rail as the grow lamp / relay. Turning the lamp on sags that rail (and throws EMI at the probe), so analog moisture jumps even though the soil did not. A ~13% drop the instant the lamp comes on is this, not the plant.
+
+The dashboard now **learns that jump** the first time you toggle the lamp and subtracts it while the lamp is on. Footer shows `lamp −47` when the offset is active.
+
+Toggle **Lamp on** then **Lamp off** once after a pull. PuTTY should print `lamp moisture offset … adc`. After that the moisture bar should hold still when the lamp changes.
+
+Keep sensor wires away from the lamp cord. Do not power a LED strip from the Nano’s 5V pin — give the lamp its own supply and share ground only.
+
+## If pump / lamp work but moisture and light stay blank
 
 ## If pump / lamp work but moisture and light stay blank
 

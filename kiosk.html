@@ -178,8 +178,12 @@ async function refresh() {
     document.getElementById("next").textContent = "Auto " + mm + ":" + ss;
     const rawEl = document.getElementById("raw");
     if (ready) {
-      rawEl.textContent = "raw " + s.moisture_raw + " / " + s.light_raw
+      let t = "raw " + s.moisture_raw + " / " + s.light_raw
         + "  dry " + s.moisture_dry + " wet " + s.moisture_wet;
+      if (s.lamp && num(s.lamp_delta)) {
+        t += "  lamp " + (s.lamp_delta > 0 ? "−" : "+") + Math.abs(num(s.lamp_delta));
+      }
+      rawEl.textContent = t;
     } else if (s.last_line) {
       rawEl.textContent = "saw: " + s.last_line;
     } else if (s.serial) {
