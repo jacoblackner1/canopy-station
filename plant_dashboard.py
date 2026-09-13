@@ -456,13 +456,23 @@ def gen_frames():
 app = Flask(__name__)
 
 
-def load_page() -> str:
-    return (ROOT / "kiosk.html").read_text()
+def load_page(mode: str = "full") -> str:
+    path = ROOT / "dashboard.html"
+    if not path.exists():
+        path = ROOT / "kiosk.html"
+    html = path.read_text()
+    kind = "kiosk" if mode == "kiosk" else "full"
+    return html.replace("{{MODE}}", kind)
 
 
 @app.get("/")
 def home():
-    return load_page()
+    return load_page("full")
+
+
+@app.get("/kiosk")
+def kiosk_page():
+    return load_page("kiosk")
 
 
 @app.get("/video")
@@ -562,7 +572,7 @@ def calibrate(kind: str):
 
 @app.after_request
 def no_store(resp):
-    if request.path in ("/status", "/"):
+    if request.path in ("/status", "/", "/kiosk"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 

@@ -45,7 +45,16 @@ cd ~/canopy-station
 ./scripts/start_kiosk.sh
 ```
 
-Dashboard is at `http://<pi-lan-ip>:5000/` on the home network. Chromium kiosk uses `http://127.0.0.1:5000/` so it never leaves the Pi.
+Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — full screen, with Water, Lamp, and Set air / Set water.
+
+The HDMI panel is stats only (camera + meters, no buttons):
+
+```bash
+cd ~/canopy-station
+./scripts/start_kiosk.sh
+```
+
+That opens `http://127.0.0.1:5000/kiosk` fullscreen on whatever display is plugged into the Pi.
 
 ## After I push an update
 
