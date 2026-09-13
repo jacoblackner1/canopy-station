@@ -56,7 +56,16 @@ sudo ./scripts/install_hdmi.sh
 sudo reboot
 ```
 
-That turns on the dashboard at boot and opens the stats kiosk after the desktop logs in. Phone and computer keep Water / Lamp / calibrate at `http://<pi-lan-ip>:5000/`. If HDMI is still Armbian after reboot, `cat ~/canopy-station/kiosk.log`.
+That turns on the dashboard at boot and opens the stats kiosk after the desktop logs in. Phone and computer keep Water / Lamp / calibrate at `http://<pi-lan-ip>:5000/`.
+
+Armbian Trixie often serves HDMI with **Wayland** (labwc / wayfire / GNOME), not X11. The kiosk now waits for a `wayland-*` socket first and launches Chromium with `--ozone-platform=wayland` (then Xwayland if that fails). A desktop `.desktop` file is ignored by labwc — the installer also writes `~/.config/labwc/autostart`.
+
+If HDMI is still Armbian after reboot, paste this from PuTTY:
+
+```bash
+~/canopy-station/scripts/probe_display.sh
+cat ~/canopy-station/kiosk.log
+```
 
 ## After I push an update
 
