@@ -47,14 +47,16 @@ cd ~/canopy-station
 
 Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — full screen, with Water, Lamp, and Set air / Set water.
 
-The HDMI panel is stats only (camera + meters, no buttons):
+The HDMI panel is stats only (camera + meters, no buttons). If the screen still shows the **Armbian boot/desktop** after starting the kiosk from PuTTY, Chromium is not attached to that display — SSH cannot own HDMI by itself. Install once, then reboot:
 
 ```bash
 cd ~/canopy-station
-./scripts/start_kiosk.sh
+git pull
+sudo ./scripts/install_hdmi.sh
+sudo reboot
 ```
 
-That opens `http://127.0.0.1:5000/kiosk` fullscreen on whatever display is plugged into the Pi.
+That turns on the dashboard at boot and opens the stats kiosk after the desktop logs in. Phone and computer keep Water / Lamp / calibrate at `http://<pi-lan-ip>:5000/`. If HDMI is still Armbian after reboot, `cat ~/canopy-station/kiosk.log`.
 
 ## After I push an update
 

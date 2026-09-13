@@ -10,7 +10,7 @@
     --fg: #e8eee6; --muted: #8a9386; --subtle: #5e675b;
     --primary: #9cba8b; --primary-fg: #0c0f0c;
     --warn: #c4a574; --alert: #c47a6a; --ok: #8fba8a;
-    --side: clamp(13.75rem, 28vw, 22rem);
+    --side: clamp(16rem, 34vw, 26rem);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -76,14 +76,17 @@
   .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 99px; }
   .bar.warn > i { background: var(--warn); }
   .bar .m { position: absolute; top: 0; width: 1px; height: 100%; background: rgba(232,238,230,.4); }
-  .actions { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+  .actions { margin-top: auto; display: flex; flex-direction: column; gap: 10px; width: 100%; }
   body.kiosk .controls { display: none !important; }
   body.kiosk header .hint { display: none; }
+  .controls { display: flex; flex-direction: column; gap: 10px; width: 100%; }
   button {
-    min-height: 44px; border: 0; border-radius: 10px; cursor: pointer;
-    font: 500 15px "Segoe UI", system-ui, sans-serif;
-    display: flex; align-items: center; justify-content: center;
+    width: 100%;
+    min-height: 48px; border: 0; border-radius: 999px; cursor: pointer;
+    font: 500 16px "Segoe UI", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center; gap: 10px;
   }
+  button svg { width: 20px; height: 20px; flex-shrink: 0; }
   button:disabled { opacity: .4; cursor: default; }
   .go { background: var(--primary); color: var(--primary-fg); }
   .ghost {
@@ -94,7 +97,7 @@
   .raw { text-align: center; font-family: ui-monospace, monospace; font-size: 11px; color: var(--subtle); margin: 0; word-break: break-word; }
   .cal { display: flex; gap: 8px; }
   .cal button {
-    flex: 1; min-height: 44px; font-size: 13px; border-radius: 10px;
+    flex: 1; min-height: 44px; font-size: 13px; border-radius: 999px;
     background: transparent; color: var(--muted);
     box-shadow: 0 0 0 1px rgba(232,238,230,.12);
   }
@@ -140,10 +143,14 @@
       <div class="meter" id="m-yellow"></div>
       <div class="actions">
         <div class="controls">
-          <button class="go" id="water" type="button">Water 1s</button>
-        </div>
-        <div class="controls" style="margin-top:8px">
-          <button class="ghost" id="lamp" type="button">Lamp on</button>
+          <button class="go" id="water" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22a7 7 0 0 0 7-7c0-4-7-11-7-11S5 11 5 15a7 7 0 0 0 7 7z"/></svg>
+            <span>Water 1s</span>
+          </button>
+          <button class="ghost" id="lamp" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+            <span id="lampLabel">Lamp on</span>
+          </button>
         </div>
         <p class="next" id="next">Auto --:--</p>
         <p class="raw" id="raw">sensors —</p>
@@ -198,8 +205,9 @@ async function refresh() {
     document.getElementById("pulse").hidden = !s.pump;
     document.getElementById("lampFlag").hidden = !s.lamp || s.pump;
     const lampBtn = document.getElementById("lamp");
-    if (lampBtn) {
-      lampBtn.textContent = s.lamp ? "Lamp off" : "Lamp on";
+    const lampLabel = document.getElementById("lampLabel");
+    if (lampBtn && lampLabel) {
+      lampLabel.textContent = s.lamp ? "Lamp off" : "Lamp on";
       lampBtn.className = s.lamp ? "go" : "ghost";
     }
     const waterBtn = document.getElementById("water");
