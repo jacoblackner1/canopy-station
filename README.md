@@ -47,7 +47,7 @@ cd ~/canopy-station
 
 Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — full screen, with Water, Lamp, and Set air / Set water.
 
-The HDMI panel is stats only (camera + meters, no buttons). If the screen still shows the **Armbian boot/desktop** after starting the kiosk from PuTTY, Chromium is not attached to that display — SSH cannot own HDMI by itself. Install once, then reboot:
+The HDMI panel is stats only (camera + meters, no buttons). This image has **no desktop** — HDMI stays on the Armbian splash because nothing owns the screen. The installer now puts a tiny kiosk compositor on tty1 (cage if available, otherwise X + openbox) so Chromium can actually take HDMI.
 
 ```bash
 cd ~/canopy-station
@@ -56,14 +56,13 @@ sudo ./scripts/install_hdmi.sh
 sudo reboot
 ```
 
-That turns on the dashboard at boot and opens the stats kiosk after the desktop logs in. Phone and computer keep Water / Lamp / calibrate at `http://<pi-lan-ip>:5000/`.
+Stop the manual `python3 plant_dashboard.py` first (Ctrl+C) — the installer starts it as a service. After reboot the panel should be Canopy, not Armbian. Phone and computer keep Water / Lamp / calibrate at `http://<pi-lan-ip>:5000/`.
 
-Armbian Trixie often serves HDMI with **Wayland** (labwc / wayfire / GNOME), not X11. The kiosk now waits for a `wayland-*` socket first and launches Chromium with `--ozone-platform=wayland` (then Xwayland if that fails). A desktop `.desktop` file is ignored by labwc — the installer also writes `~/.config/labwc/autostart`.
-
-If HDMI is still Armbian after reboot, paste this from PuTTY:
+If HDMI is still Armbian:
 
 ```bash
 ~/canopy-station/scripts/probe_display.sh
+journalctl -u canopy-kiosk -n 80 --no-pager
 cat ~/canopy-station/kiosk.log
 ```
 

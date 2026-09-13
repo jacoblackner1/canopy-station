@@ -1,26 +1,26 @@
 #!/bin/bash
-# HDMI stats view — fills the plugged-in display. No water / lamp / calibrate.
-# Detects Wayland (labwc / wayfire / sway / GNOME) or X11 and launches Chromium
-# on the compositor that actually owns HDMI. SSH cannot own that display.
+# HDMI stats view. Attaches to an existing desktop if one is running;
+# otherwise starts our own compositor (cage / xinit) on tty1.
+# SSH cannot own HDMI — that is what the canopy-kiosk systemd unit is for.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG="${ROOT}/kiosk.log"
 URL="${1:-http://127.0.0.1:5000/kiosk}"
 UID_NUM="$(id -u)"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${UID_NUM}}"
+export HOME="${HOME:-$(eval echo "~$(id -un)")}"
 
 mkdir -p "$(dirname "$LOG")"
 exec >>"$LOG" 2>&1
 echo "---- $(date) start_kiosk ----"
-echo "user=$(id -un) uid=$UID_NUM"
+echo "user=$(id -un) uid=$UID_NUM invocation=${INVOCATION_ID-none}"
 echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
 echo "WAYLAND_DISPLAY=${WAYLAND_DISPLAY-}"
 echo "DISPLAY=${DISPLAY-}"
 echo "XDG_SESSION_TYPE=${XDG_SESSION_TYPE-}"
-echo "DESKTOP_SESSION=${DESKTOP_SESSION-}"
-echo "XDG_CURRENT_DESKTOP=${XDG_CURRENT_DESKTOP-}"
-ps -eo comm= 2>/dev/null | grep -E '^(labwc|wayfire|sway|weston|mutter|gnome-shell|Xorg|Xwayland|lightdm|gdm|sddm|xfce4-session|cinnamon)$' || echo "no compositor in process list"
-ls -l "$XDG_RUNTIME_DIR"/wayland-* /tmp/.X11-unix 2>&1 || true
+echo "tty=$(tty 2>/dev/null || echo none)"
+ps -eo comm= 2>/dev/null | grep -E '^(cage|labwc|wayfire|sway|weston|mutter|gnome-shell|Xorg|Xwayland|lightdm|gdm|sddm|xfce4-session)$' || echo "no compositor yet"
+ls -l "$XDG_RUNTIME_DIR"/wayland-* /tmp/.X11-unix /dev/dri 2>&1 || true
 
 pick_wayland() {
   local sock
@@ -49,8 +49,13 @@ pick_x11() {
   return 1
 }
 
+WAIT=8
+if [ -z "${INVOCATION_ID:-}" ]; then
+  WAIT=20
+fi
+
 PLATFORM=""
-for i in $(seq 1 90); do
+for i in $(seq 1 "$WAIT"); do
   if pick_wayland; then
     PLATFORM=wayland
     echo "found wayland $WAYLAND_DISPLAY after ${i}s"
@@ -61,13 +66,46 @@ for i in $(seq 1 90); do
     echo "found x11 $DISPLAY after ${i}s"
     break
   fi
-  echo "waiting for display ($i)"
+  echo "waiting for display ($i/$WAIT)"
   sleep 1
 done
 
+wait_dashboard() {
+  local i
+  for i in $(seq 1 60); do
+    if curl -sf -o /dev/null --max-time 1 "$URL"; then
+      echo "dashboard ready"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "dashboard not up yet — launching anyway"
+}
+
+start_own_session() {
+  echo "no existing desktop — starting a kiosk compositor on this tty"
+  wait_dashboard
+  if command -v cage >/dev/null 2>&1; then
+    echo "using cage (Wayland)"
+    export XDG_SESSION_TYPE=wayland
+    export OZONE=wayland
+    exec cage -s -- "$ROOT/scripts/chromium_kiosk.sh" "$URL"
+  fi
+  if command -v xinit >/dev/null 2>&1; then
+    echo "using xinit + openbox (X11)"
+    export XDG_SESSION_TYPE=x11
+    exec xinit "$ROOT/scripts/kiosk_xsession.sh" "$URL" -- :0 vt1 -nolisten tcp -keeptty
+  fi
+  echo "cage and xinit missing. Re-run: sudo ./scripts/install_hdmi.sh"
+  exit 1
+}
+
 if [ -z "$PLATFORM" ]; then
-  echo "no Wayland or X11 socket — HDMI compositor is not up"
-  echo "hint: graphical session + autologin, then reboot after install_hdmi.sh"
+  if [ -n "${INVOCATION_ID:-}" ]; then
+    start_own_session
+  fi
+  echo "No graphical session on this board (no Wayland, no X11, no seat)."
+  echo "SSH cannot take HDMI. Run:  sudo ./scripts/install_hdmi.sh && sudo reboot"
   exit 1
 fi
 
@@ -75,14 +113,12 @@ if [ "$PLATFORM" = wayland ]; then
   export XDG_SESSION_TYPE=wayland
   pkill -u "$UID_NUM" -x swayidle >/dev/null 2>&1 || true
 else
-  export DISPLAY="${DISPLAY:-:0}"
   export XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-x11}"
   if [ -z "${XAUTHORITY:-}" ]; then
     for a in \
       "$HOME/.Xauthority" \
       /run/lightdm/*/xauthority \
-      /run/user/"$UID_NUM"/gdm/Xauthority \
-      /run/user/"$UID_NUM"/.mutter-Xwaylandauth*; do
+      /run/user/"$UID_NUM"/gdm/Xauthority; do
       if [ -f "$a" ]; then
         export XAUTHORITY="$a"
         break
@@ -90,67 +126,17 @@ else
     done
   fi
   xset s off -dpms >/dev/null 2>&1 || true
-  xset s noblank >/dev/null 2>&1 || true
   xrandr --auto >/dev/null 2>&1 || true
 fi
-echo "platform=$PLATFORM DISPLAY=${DISPLAY-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY-}"
 
-for i in $(seq 1 60); do
-  if curl -sf -o /dev/null --max-time 1 "$URL"; then
-    echo "dashboard ready"
-    break
-  fi
-  sleep 1
-done
-
+wait_dashboard
 pkill -f "chromium.*(kiosk|:5000)" >/dev/null 2>&1 || true
-sleep 0.4
-
-CHROME=""
-for c in chromium chromium-browser google-chrome; do
-  if command -v "$c" >/dev/null 2>&1; then
-    CHROME="$c"
-    break
-  fi
-done
-if [ -z "$CHROME" ]; then
-  echo "chromium is not installed. sudo apt install -y chromium"
-  exit 1
-fi
-echo "using $CHROME"
-
-PROFILE="/tmp/canopy-chrome"
-mkdir -p "$PROFILE"
-
-launch() {
-  local ozone="$1"
-  echo "launch ozone=$ozone"
-  "$CHROME" \
-    --kiosk \
-    --start-fullscreen \
-    --start-maximized \
-    --window-position=0,0 \
-    --force-device-scale-factor=1 \
-    --app="$URL" \
-    --user-data-dir="$PROFILE" \
-    --ozone-platform="$ozone" \
-    --no-first-run \
-    --noerrdialogs \
-    --disable-infobars \
-    --disable-session-crashed-bubble \
-    --disable-restore-session-state \
-    --disable-translate \
-    --disable-features=Translate \
-    --disable-gpu \
-    --disable-dev-shm-usage \
-    --autoplay-policy=no-user-gesture-required \
-    --no-sandbox
-  echo "chromium ozone=$ozone exited $?"
-}
-
-launch "$PLATFORM"
+sleep 0.3
+export OZONE="$PLATFORM"
+echo "attach ozone=$OZONE"
+"$ROOT/scripts/chromium_kiosk.sh" "$URL"
 if [ "$PLATFORM" = wayland ]; then
-  echo "native Wayland failed — retry via Xwayland"
-  launch x11
+  echo "wayland chromium exited — retry x11"
+  export OZONE=x11
+  exec "$ROOT/scripts/chromium_kiosk.sh" "$URL"
 fi
-echo "kiosk ended"
