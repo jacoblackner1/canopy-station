@@ -32,6 +32,14 @@ Flash `arduino/canopy_nano.ino` to the Nano from the Arduino IDE on your PC (USB
 
 ## Each time you start the station
 
+If `install_hdmi.sh` already ran, the dashboard is a service — do **not** start a second `python3 plant_dashboard.py` (you will get `Address already in use` on port 5000).
+
+```bash
+sudo systemctl status canopy-station --no-pager
+```
+
+Manual start is only for a first-time machine with no service yet:
+
 ```bash
 cd ~/canopy-station
 source ~/home_sentinel/sentinel_env/bin/activate
@@ -79,13 +87,18 @@ cat ~/canopy-station/kiosk.log
 
 ## After I push an update
 
-Stop the running dashboard (Ctrl+C in that PuTTY window), then:
-
 ```bash
 cd ~/canopy-station
 git pull
-source ~/home_sentinel/sentinel_env/bin/activate
-python3 plant_dashboard.py
+sudo systemctl restart canopy-station
+```
+
+Do not run `python3 plant_dashboard.py` while the service is up — port 5000 is already taken, and the extra process will also steal (or fail to open) the camera.
+
+Watch with:
+
+```bash
+journalctl -u canopy-station -f
 ```
 
 Watch for `Arduino on /dev/ttyUSB0` and `sensor raw … -> moisture …% light …%`. Refresh the kiosk (or rerun `./scripts/start_kiosk.sh`).
