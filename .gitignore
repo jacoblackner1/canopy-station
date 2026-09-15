@@ -5,3 +5,6 @@ sentinel_env/
 *.jpg
 *.log
 .DS_Store
+*.pem
+*credentials*.json
+.cloudflared/

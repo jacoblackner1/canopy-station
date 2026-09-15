@@ -47,6 +47,17 @@ cd ~/canopy-station
 
 Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — full screen, with Water, Lamp, and Set air / Set water.
 
+**Remote access** (optional): Cloudflare Tunnel + Access, no router port-forward. Same UI after email OTP. See [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md).
+
+```bash
+cd ~/canopy-station
+git pull
+sudo ./scripts/install_tunnel.sh
+```
+
+Then create the named tunnel, fill `/etc/cloudflared/config.yml`, and put Access on the hostname. LAN `:5000` and HDMI stay as they are.
+
+
 The HDMI panel is stats only (camera + meters, no buttons). This image has **no desktop** — HDMI stays on the Armbian splash because nothing owns the screen. The installer now puts a tiny kiosk compositor on tty1 (cage if available, otherwise X + openbox) so Chromium can actually take HDMI.
 
 ```bash
