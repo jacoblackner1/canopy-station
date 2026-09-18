@@ -19,6 +19,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 chmod +x "${ROOT}/scripts/"*.sh
+if [ -x "${ROOT}/scripts/allow_poweroff.sh" ]; then
+  bash "${ROOT}/scripts/allow_poweroff.sh"
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 echo "Installing a tiny HDMI stack (chromium + cage/X)…"

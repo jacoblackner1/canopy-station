@@ -95,6 +95,15 @@ sudo systemctl restart canopy-station
 
 Do not run `python3 plant_dashboard.py` while the service is up — port 5000 is already taken, and the extra process will also steal (or fail to open) the camera.
 
+**Shut down from the phone/computer page** (not HDMI). Tap **Shut down**, then tap again within 5 seconds. Same as `sudo poweroff` — HDMI goes dark, pump and lamp drop off. One-time permission:
+
+```bash
+cd ~/canopy-station
+sudo ./scripts/allow_poweroff.sh
+sudo systemctl restart canopy-station
+```
+
+
 Watch with:
 
 ```bash

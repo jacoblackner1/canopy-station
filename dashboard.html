@@ -105,6 +105,15 @@
     background: transparent; color: var(--muted);
     box-shadow: 0 0 0 1px rgba(232,238,230,.12);
   }
+  .power {
+    min-height: 40px; font-size: 13px; color: var(--muted);
+    background: transparent;
+    box-shadow: 0 0 0 1px rgba(232,238,230,.12);
+  }
+  .power.armed {
+    color: #1a100e; background: var(--alert);
+    box-shadow: none;
+  }
   @media (max-width: 700px) {
     body.full { overflow: auto; }
     body.full .stage { height: auto; min-height: 100dvh; }
@@ -161,6 +170,9 @@
         <div class="cal controls">
           <button type="button" id="setAir">Set air</button>
           <button type="button" id="setWater">Set water</button>
+        </div>
+        <div class="controls">
+          <button class="power" id="power" type="button">Shut down</button>
         </div>
         <p class="cpu" id="cpu"></p>
       </div>
@@ -260,6 +272,41 @@ if (!KIOSK) {
   document.getElementById("lamp").onclick = () => fetch("/light", { method: "POST" });
   document.getElementById("setAir").onclick = () => calibrate("air");
   document.getElementById("setWater").onclick = () => calibrate("water");
+  const powerBtn = document.getElementById("power");
+  let powerArmed = 0;
+  powerBtn.onclick = async () => {
+    const now = Date.now();
+    if (now - powerArmed > 5000) {
+      powerArmed = now;
+      powerBtn.textContent = "Tap again to shut down";
+      powerBtn.classList.add("armed");
+      setTimeout(() => {
+        if (Date.now() - powerArmed >= 4900 && !powerBtn.disabled) {
+          powerBtn.textContent = "Shut down";
+          powerBtn.classList.remove("armed");
+          powerArmed = 0;
+        }
+      }, 5000);
+      return;
+    }
+    powerBtn.disabled = true;
+    powerBtn.textContent = "Shutting down…";
+    try {
+      const res = await fetch("/poweroff", { method: "POST" });
+      const s = await res.json();
+      if (!s.ok) {
+        powerBtn.disabled = false;
+        powerBtn.classList.remove("armed");
+        powerBtn.textContent = s.error || "Shut down failed";
+        powerArmed = 0;
+      }
+    } catch (err) {
+      powerBtn.disabled = false;
+      powerBtn.classList.remove("armed");
+      powerBtn.textContent = "Shut down failed";
+      powerArmed = 0;
+    }
+  };
 }
 meter(document.getElementById("m-moist"), "Moisture", 0, 40, 70, false);
 meter(document.getElementById("m-light"), "Light", 0, 40, null, false);

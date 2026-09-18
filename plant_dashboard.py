@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -609,6 +610,41 @@ def calibrate(kind: str):
         refresh_status()
     print(f"calibrated {key} = {raw}", flush=True)
     return jsonify({"ok": True, "key": key, "raw": int(raw), "dry": CFG["moistureDry"], "wet": CFG["moistureWet"]})
+
+
+def _poweroff_bin() -> str | None:
+    for p in ("/sbin/poweroff", "/usr/sbin/poweroff"):
+        if Path(p).is_file():
+            return p
+    return None
+
+
+def _do_poweroff(bin_path: str) -> None:
+    time.sleep(0.6)
+    print(f"poweroff requested → sudo -n {bin_path}", flush=True)
+    r = subprocess.run(["sudo", "-n", bin_path], capture_output=True, text=True)
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout or "").strip()
+        print(f"poweroff failed rc={r.returncode} {err}", flush=True)
+
+
+@app.post("/poweroff")
+def poweroff():
+    """Software halt. Relays drop with the board. Requires allow_poweroff.sh."""
+    bin_path = _poweroff_bin()
+    if bin_path is None:
+        return jsonify({"ok": False, "error": "poweroff not found"}), 500
+    listed = subprocess.run(["sudo", "-n", "-l"], capture_output=True, text=True)
+    if listed.returncode != 0 or "poweroff" not in (listed.stdout or ""):
+        return jsonify(
+            {
+                "ok": False,
+                "error": "run sudo ./scripts/allow_poweroff.sh once",
+            }
+        ), 403
+    threading.Thread(target=_do_poweroff, args=(bin_path,), daemon=True).start()
+    return jsonify({"ok": True})
+
 
 
 @app.after_request
