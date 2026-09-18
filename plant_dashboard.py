@@ -646,37 +646,43 @@ def calibrate(kind: str):
     return jsonify({"ok": True, "key": key, "raw": int(raw), "dry": CFG["moistureDry"], "wet": CFG["moistureWet"]})
 
 
-def _poweroff_bin() -> str | None:
+def _poweroff_cmds() -> list[list[str]]:
+    cmds: list[list[str]] = []
+    systemctl = next(
+        (p for p in ("/bin/systemctl", "/usr/bin/systemctl") if Path(p).is_file()),
+        None,
+    )
+    if systemctl:
+        cmds.append(["sudo", "-n", systemctl, "start", "canopy-poweroff.service"])
+        cmds.append([systemctl, "--no-ask-password", "poweroff"])
     for p in ("/sbin/poweroff", "/usr/sbin/poweroff"):
         if Path(p).is_file():
-            return p
-    return None
+            cmds.append(["sudo", "-n", p])
+    cmds.append(["loginctl", "poweroff"])
+    return cmds
 
 
-def _do_poweroff(bin_path: str) -> None:
-    time.sleep(0.6)
-    print(f"poweroff requested → sudo -n {bin_path}", flush=True)
-    r = subprocess.run(["sudo", "-n", bin_path], capture_output=True, text=True)
-    if r.returncode != 0:
-        err = (r.stderr or r.stdout or "").strip()
-        print(f"poweroff failed rc={r.returncode} {err}", flush=True)
+def _do_poweroff() -> None:
+    time.sleep(0.4)
+    last = "no poweroff command tried"
+    for cmd in _poweroff_cmds():
+        print("poweroff try: " + " ".join(cmd), flush=True)
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            print("poweroff started", flush=True)
+            return
+        last = (r.stderr or r.stdout or f"rc={r.returncode}").strip()
+        print(f"poweroff skip rc={r.returncode} {last}", flush=True)
+    print(f"poweroff failed: {last}", flush=True)
 
 
 @app.post("/poweroff")
 def poweroff():
     """Software halt. Relays drop with the board. Requires allow_poweroff.sh."""
-    bin_path = _poweroff_bin()
-    if bin_path is None:
+    cmds = _poweroff_cmds()
+    if not cmds:
         return jsonify({"ok": False, "error": "poweroff not found"}), 500
-    listed = subprocess.run(["sudo", "-n", "-l"], capture_output=True, text=True)
-    if listed.returncode != 0 or "poweroff" not in (listed.stdout or ""):
-        return jsonify(
-            {
-                "ok": False,
-                "error": "run sudo ./scripts/allow_poweroff.sh once",
-            }
-        ), 403
-    threading.Thread(target=_do_poweroff, args=(bin_path,), daemon=True).start()
+    threading.Thread(target=_do_poweroff, daemon=False).start()
     return jsonify({"ok": True})
 
 
