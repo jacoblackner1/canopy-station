@@ -105,6 +105,46 @@ STATE = {
 # Learned when the lamp toggles: analog jump that is electrical, not soil.
 LAMP_EDGE = {"at": 0.0, "before": None, "turning_on": False, "learned": False}
 
+_CPU_TEMP_PATH: Path | None = None
+
+
+def cpu_temp_c() -> float | None:
+    """SoC temperature in °C from sysfs (Allwinner H6: millidegrees)."""
+    global _CPU_TEMP_PATH
+    paths: list[Path] = []
+    if _CPU_TEMP_PATH is not None:
+        paths.append(_CPU_TEMP_PATH)
+    else:
+        root = Path("/sys/class/thermal")
+        if root.is_dir():
+            ranked: list[Path] = []
+            other: list[Path] = []
+            for zone in sorted(root.glob("thermal_zone*")):
+                t = zone / "temp"
+                if not t.is_file():
+                    continue
+                kind = ""
+                try:
+                    kind = (zone / "type").read_text(encoding="utf-8").strip().lower()
+                except OSError:
+                    pass
+                if "cpu" in kind or "soc" in kind:
+                    ranked.append(t)
+                else:
+                    other.append(t)
+            paths.extend(ranked or other)
+    for p in paths:
+        try:
+            raw = int(p.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+        c = raw / 1000.0 if raw > 200 else float(raw)
+        if 0 < c < 125:
+            _CPU_TEMP_PATH = p
+            return round(c, 1)
+    return None
+
+
 
 def maybe_reload_cfg() -> None:
     global CFG, CFG_MTIME
@@ -513,6 +553,7 @@ def status():
             "moisture_dry": CFG["moistureDry"],
             "moisture_wet": CFG["moistureWet"],
             "lamp_delta": int(s.get("lamp_delta") or 0),
+            "cpu_temp": cpu_temp_c(),
         }
     )
 

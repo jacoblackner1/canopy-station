@@ -95,6 +95,10 @@
   }
   .next { text-align: center; font-family: ui-monospace, monospace; font-size: clamp(11px, 1.8vh, 14px); color: var(--muted); margin: 0; }
   .raw { text-align: center; font-family: ui-monospace, monospace; font-size: 11px; color: var(--subtle); margin: 0; word-break: break-word; }
+  .cpu {
+    text-align: center; font-family: ui-monospace, monospace;
+    font-size: 10px; color: var(--subtle); margin: 2px 0 0; letter-spacing: .02em;
+  }
   .cal { display: flex; gap: 8px; }
   .cal button {
     flex: 1; min-height: 44px; font-size: 13px; border-radius: 999px;
@@ -158,6 +162,7 @@
           <button type="button" id="setAir">Set air</button>
           <button type="button" id="setWater">Set water</button>
         </div>
+        <p class="cpu" id="cpu"></p>
       </div>
     </aside>
   </div>
@@ -230,6 +235,10 @@ async function refresh() {
       rawEl.textContent = "Arduino silent";
     } else {
       rawEl.textContent = "no Arduino";
+    }
+    const cpuEl = document.getElementById("cpu");
+    if (cpuEl) {
+      cpuEl.textContent = s.cpu_temp == null ? "" : ("CPU " + Number(s.cpu_temp).toFixed(1) + " °C");
     }
   } catch (err) {
     document.getElementById("raw").textContent = "status error";
