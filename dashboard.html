@@ -30,8 +30,16 @@
     padding: 0 1rem 0 1.1rem; background: var(--surface); flex-shrink: 0;
   }
   header .brand { font-family: Georgia, "Times New Roman", serif; font-size: clamp(14px, 2.4vh, 20px); margin: 0; }
-  header .clock { font-family: ui-monospace, monospace; font-size: clamp(12px, 2vh, 16px); color: var(--muted); }
   header .hint { font-size: 12px; color: var(--subtle); margin: 0 12px 0 auto; }
+  header .meta {
+    display: flex; align-items: baseline; gap: 12px; margin-left: auto; flex-shrink: 0;
+  }
+  header .cpu {
+    font-family: ui-monospace, monospace;
+    font-size: clamp(11px, 1.8vh, 14px);
+    color: var(--muted); margin: 0; letter-spacing: .02em; white-space: nowrap;
+  }
+  header .clock { font-family: ui-monospace, monospace; font-size: clamp(12px, 2vh, 16px); color: var(--muted); margin: 0; }
   .body { display: flex; flex: 1; min-height: 0; }
   .cam { position: relative; flex: 1; min-width: 0; background: var(--surface-2); }
   .cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -95,10 +103,6 @@
   }
   .next { text-align: center; font-family: ui-monospace, monospace; font-size: clamp(11px, 1.8vh, 14px); color: var(--muted); margin: 0; }
   .raw { text-align: center; font-family: ui-monospace, monospace; font-size: 11px; color: var(--subtle); margin: 0; word-break: break-word; }
-  .cpu {
-    text-align: center; font-family: ui-monospace, monospace;
-    font-size: 10px; color: var(--subtle); margin: 2px 0 0; letter-spacing: .02em;
-  }
   .cal { display: flex; gap: 8px; }
   .cal button {
     flex: 1; min-height: 44px; font-size: 13px; border-radius: 999px;
@@ -133,7 +137,10 @@
   <header>
     <p class="brand">Canopy</p>
     <p class="hint">Controls on this page · HDMI is stats only</p>
-    <p class="clock" id="clock">--:--:--</p>
+    <div class="meta">
+      <p class="cpu" id="cpu">CPU -- °C</p>
+      <p class="clock" id="clock">--:--:--</p>
+    </div>
   </header>
   <div class="body">
     <div class="cam">
@@ -174,7 +181,6 @@
         <div class="controls">
           <button class="power" id="power" type="button">Shut down</button>
         </div>
-        <p class="cpu" id="cpu"></p>
       </div>
     </aside>
   </div>
@@ -250,7 +256,9 @@ async function refresh() {
     }
     const cpuEl = document.getElementById("cpu");
     if (cpuEl) {
-      cpuEl.textContent = s.cpu_temp == null ? "" : ("CPU " + Number(s.cpu_temp).toFixed(1) + " °C");
+      cpuEl.textContent = s.cpu_temp == null
+        ? "CPU -- °C"
+        : ("CPU " + Number(s.cpu_temp).toFixed(1) + " °C");
     }
   } catch (err) {
     document.getElementById("raw").textContent = "status error";

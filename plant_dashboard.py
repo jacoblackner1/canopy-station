@@ -107,42 +107,76 @@ STATE = {
 LAMP_EDGE = {"at": 0.0, "before": None, "turning_on": False, "learned": False}
 
 _CPU_TEMP_PATH: Path | None = None
+_CPU_TEMP_LOGGED = False
+
+
+def _milli_to_c(raw: int) -> float | None:
+    c = raw / 1000.0 if abs(raw) > 200 else float(raw)
+    if 0 < c < 125:
+        return round(c, 1)
+    return None
+
+
+def _temp_candidates() -> list[Path]:
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+
+    def add(p: Path) -> None:
+        try:
+            r = p.resolve()
+        except OSError:
+            r = p
+        if r in seen or not p.exists():
+            return
+        seen.add(r)
+        ordered.append(p)
+
+    add(Path("/etc/armbianmonitor/datasources/soctemp"))
+    hwmon = Path("/sys/class/hwmon")
+    if hwmon.is_dir():
+        for p in sorted(hwmon.glob("hwmon*/temp*_input")):
+            add(p)
+    root = Path("/sys/class/thermal")
+    if root.is_dir():
+        ranked: list[Path] = []
+        other: list[Path] = []
+        for zone in sorted(root.glob("thermal_zone*")):
+            t = zone / "temp"
+            if not t.is_file():
+                continue
+            kind = ""
+            try:
+                kind = (zone / "type").read_text(encoding="utf-8").strip().lower()
+            except OSError:
+                pass
+            if any(x in kind for x in ("cpu", "soc", "gpu")):
+                ranked.append(t)
+            else:
+                other.append(t)
+        for p in ranked + other:
+            add(p)
+    return ordered
 
 
 def cpu_temp_c() -> float | None:
-    """SoC temperature in °C from sysfs (Allwinner H6: millidegrees)."""
-    global _CPU_TEMP_PATH
-    paths: list[Path] = []
-    if _CPU_TEMP_PATH is not None:
-        paths.append(_CPU_TEMP_PATH)
-    else:
-        root = Path("/sys/class/thermal")
-        if root.is_dir():
-            ranked: list[Path] = []
-            other: list[Path] = []
-            for zone in sorted(root.glob("thermal_zone*")):
-                t = zone / "temp"
-                if not t.is_file():
-                    continue
-                kind = ""
-                try:
-                    kind = (zone / "type").read_text(encoding="utf-8").strip().lower()
-                except OSError:
-                    pass
-                if "cpu" in kind or "soc" in kind:
-                    ranked.append(t)
-                else:
-                    other.append(t)
-            paths.extend(ranked or other)
+    """SoC temperature in °C (Allwinner H6 millidegrees, hwmon, or Armbian)."""
+    global _CPU_TEMP_PATH, _CPU_TEMP_LOGGED
+    paths = [_CPU_TEMP_PATH] if _CPU_TEMP_PATH is not None else _temp_candidates()
     for p in paths:
-        try:
-            raw = int(p.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
+        if p is None:
             continue
-        c = raw / 1000.0 if raw > 200 else float(raw)
-        if 0 < c < 125:
-            _CPU_TEMP_PATH = p
-            return round(c, 1)
+        try:
+            raw = int(p.read_text(encoding="utf-8").strip().split()[0])
+        except (OSError, ValueError, IndexError):
+            continue
+        c = _milli_to_c(raw)
+        if c is None:
+            continue
+        _CPU_TEMP_PATH = p
+        if not _CPU_TEMP_LOGGED:
+            print(f"cpu temp {c} °C from {p}", flush=True)
+            _CPU_TEMP_LOGGED = True
+        return c
     return None
 
 
