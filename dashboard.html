@@ -234,17 +234,23 @@ const PLANTS = {
   standard: { label: "Standard houseplant", low: 40, high: 70 },
   succulent: { label: "Succulent / low-water", low: 20, high: 50 },
 };
+let chosenPlant = null;
 function markPlant(id, low, high, label) {
+  if (id && PLANTS[id]) chosenPlant = id;
   document.querySelectorAll("#plants [data-plant]").forEach((b) => {
-    b.classList.toggle("on", b.getAttribute("data-plant") === id);
+    b.classList.toggle("on", b.getAttribute("data-plant") === chosenPlant);
   });
-  if (label) {
-    document.getElementById("profile").textContent = label;
-    document.getElementById("plant").textContent = label;
+  const p = PLANTS[chosenPlant] || {};
+  const name = label || p.label;
+  if (name) {
+    document.getElementById("profile").textContent = name;
+    document.getElementById("plant").textContent = name;
   }
+  const lo = low != null ? low : p.low;
+  const hi = high != null ? high : p.high;
   const band = document.getElementById("band");
-  if (band && low != null && high != null) {
-    band.textContent = "Moisture " + low + "–" + high + "%";
+  if (band && lo != null && hi != null) {
+    band.textContent = "Moisture " + lo + "–" + hi + "%";
   }
 }
 async function refresh() {
@@ -254,10 +260,20 @@ async function refresh() {
     const ready = !!s.sensors_ok;
     document.getElementById("status").textContent = s.status || "Waiting";
     document.getElementById("status").className = "status " + (s.status_tone || "muted");
-    document.getElementById("profile").textContent = s.profile || "—";
-    document.getElementById("plant").textContent = s.profile || "—";
-    markPlant(s.plant_id || "standard", s.low, s.high, s.profile);
-    meter(document.getElementById("m-moist"), "Moisture", s.moisture, s.low, s.high, ready);
+    const p = (s.plant_id && PLANTS[s.plant_id])
+      ? PLANTS[s.plant_id]
+      : (chosenPlant && PLANTS[chosenPlant]) ? PLANTS[chosenPlant] : null;
+    if (s.plant_id && PLANTS[s.plant_id]) {
+      markPlant(s.plant_id, s.low, s.high, s.profile);
+    } else if (p) {
+      markPlant(chosenPlant, p.low, p.high, p.label);
+    } else {
+      document.getElementById("profile").textContent = s.profile || "—";
+      document.getElementById("plant").textContent = s.profile || "—";
+    }
+    const moistLow = p ? p.low : s.low;
+    const moistHigh = p ? p.high : s.high;
+    meter(document.getElementById("m-moist"), "Moisture", s.moisture, moistLow, moistHigh, ready);
     meter(document.getElementById("m-light"), "Light", s.light, 40, null, ready);
     meter(document.getElementById("m-green"), "Green", num(s.green) * 100, null, null, true);
     meter(document.getElementById("m-yellow"), "Yellow", num(s.yellow) * 100, null, 15, true);
@@ -281,6 +297,9 @@ async function refresh() {
       if (!KIOSK) t += "  dry " + s.moisture_dry + " wet " + s.moisture_wet;
       if (s.lamp && num(s.lamp_delta)) {
         t += "  lamp " + (s.lamp_delta > 0 ? "−" : "+") + Math.abs(num(s.lamp_delta));
+      }
+      if (!KIOSK && chosenPlant && !s.plant_id) {
+        t += "  restart station to keep plant type";
       }
       rawEl.textContent = t;
     } else if (s.last_line) {
@@ -321,9 +340,19 @@ if (!KIOSK) {
       const id = b.getAttribute("data-plant");
       const p = PLANTS[id];
       if (p) markPlant(id, p.low, p.high, p.label);
+      const rawEl = document.getElementById("raw");
       try {
-        await fetch("/plant/" + id, { method: "POST" });
-      } catch (err) {}
+        const res = await fetch("/plant/" + id, { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) {
+          rawEl.textContent = "Restart the station to save plant type: sudo systemctl restart canopy-station";
+          return;
+        }
+        markPlant(body.plant_id, body.low, body.high, body.profile);
+      } catch (err) {
+        rawEl.textContent = "Restart the station to save plant type";
+        return;
+      }
       refresh();
     };
   });

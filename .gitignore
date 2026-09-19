@@ -8,3 +8,5 @@ sentinel_env/
 *.pem
 *credentials*.json
 .cloudflared/
+station.json
+plant.kind

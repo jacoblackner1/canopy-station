@@ -22,10 +22,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 import serial
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, make_response, request
 
 ROOT = Path(__file__).resolve().parent
 CFG_PATH = ROOT / "station.json"
+KIND_PATH = ROOT / "plant.kind"
 
 # 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
 # Typical capacitive: air ~550–700, water ~220–320.
@@ -193,6 +194,7 @@ def maybe_reload_cfg() -> None:
         return
     CFG_MTIME = mtime
     CFG = load_cfg()
+    CFG["plantKind"] = read_kind()
     print(
         f"reloaded station.json dry {CFG['moistureDry']} wet {CFG['moistureWet']} "
         f"dark {CFG['lightDark']} day {CFG['lightDay']} plant {CFG.get('plantKind')}",
@@ -216,8 +218,31 @@ def profile_by_id(kind) -> dict:
     return PROFILES[1]
 
 
+def read_kind() -> str:
+    try:
+        key = KIND_PATH.read_text(encoding="utf-8").strip().lower()
+        if any(p["id"] == key for p in PROFILES):
+            return key
+    except OSError:
+        pass
+    return profile_by_id(CFG.get("plantKind"))["id"]
+
+
+def write_kind(kind: str) -> None:
+    profile = profile_by_id(kind)
+    CFG["plantKind"] = profile["id"]
+    try:
+        KIND_PATH.write_text(profile["id"] + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"plant.kind save failed: {exc}", flush=True)
+    try:
+        save_cfg(CFG)
+    except OSError as exc:
+        print(f"plant save failed: {exc}", flush=True)
+
+
 def current_profile() -> dict:
-    return profile_by_id(CFG.get("plantKind"))
+    return profile_by_id(read_kind())
 
 
 _p0 = current_profile()
@@ -547,7 +572,9 @@ def load_page(mode: str = "full") -> str:
         path = ROOT / "kiosk.html"
     html = path.read_text()
     kind = "kiosk" if mode == "kiosk" else "full"
-    return html.replace("{{MODE}}", kind)
+    resp = make_response(html.replace("{{MODE}}", kind))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/")
@@ -584,7 +611,7 @@ def status():
             "pump": bool(s["pump"]),
             "lamp": bool(s["lamp"]),
             "profile": s["profile"],
-            "plant_id": s.get("plant_id") or profile["id"],
+            "plant_id": profile["id"],
             "status": s["status"],
             "status_tone": s["status_tone"],
             "low": profile["low"],
@@ -600,6 +627,7 @@ def status():
             "moisture_wet": CFG["moistureWet"],
             "lamp_delta": int(s.get("lamp_delta") or 0),
             "cpu_temp": cpu_temp_c(),
+            "app": "plant-select",
         }
     )
 
@@ -662,11 +690,7 @@ def set_plant(kind: str):
     profile = profile_by_id(kind)
     if str(kind or "").strip().lower() != profile["id"]:
         return jsonify({"ok": False, "error": "unknown plant"}), 400
-    CFG["plantKind"] = profile["id"]
-    try:
-        save_cfg(CFG)
-    except OSError as exc:
-        print(f"plant save failed: {exc}", flush=True)
+    write_kind(profile["id"])
     refresh_status()
     print(f"plant {profile['id']} moisture {profile['low']}-{profile['high']}%", flush=True)
     return jsonify(

@@ -123,7 +123,15 @@ On the phone/computer page pick **Lush**, **Standard**, or **Succulent**. HDMI s
 | Standard houseplant | 40–70% |
 | Succulent / low-water | 20–50% |
 
-The choice is saved in `station.json` as `plantKind`.
+The choice is saved even after a reboot. **git pull is not enough** — the running station keeps the old code until you restart:
+
+```bash
+cd ~/canopy-station
+git pull
+sudo systemctl restart canopy-station
+```
+
+Then hard-refresh the phone/computer page. HDMI has no picker. If the type snaps back, the old process is still on port 5000 — restart, don’t start a second `python3`.
 
 ## Calibrate moisture (this is what makes the % accurate)
 
