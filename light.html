@@ -30,29 +30,31 @@
   main { padding: 8px 16px 24px; max-width: 56rem; margin: 0 auto; }
   .card {
     background: var(--surface); border-radius: 20px;
-    padding: 20px 20px 24px;
+    padding: 24px 24px 28px;
     box-shadow: 0 0 0 1px rgba(232,238,230,.08);
   }
   .k { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
-  .num { font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.4rem, 8vw, 3.2rem); margin: 4px 0 0; letter-spacing: -0.03em; line-height: 1; }
-  .num span { font-family: inherit; font-size: 1rem; color: var(--muted); margin-left: 8px; font-style: normal; }
-  .line { margin: 10px 0 0; font-size: 15px; }
+  .num { font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.8rem, 9vw, 3.75rem); margin: 6px 0 0; letter-spacing: -0.03em; line-height: 1; }
+  .num span { font-family: "Segoe UI", system-ui, sans-serif; font-size: 1rem; color: var(--muted); margin-left: 8px; font-style: normal; }
+  .line { margin: 12px 0 0; font-size: 15px; }
   .line.behind { color: var(--alert); }
   .line.ahead { color: var(--ok); }
-  svg { width: 100%; height: auto; display: block; margin-top: 8px; }
-  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  svg { width: 100%; height: auto; display: block; margin-top: 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 4px; }
   .sw { display: inline-block; width: 16px; height: 2px; vertical-align: middle; margin-right: 6px; }
   .sw.exp { border-top: 1.5px dashed var(--muted); height: 0; }
   .sw.act { background: var(--warn); }
   .sw.gap { width: 8px; height: 8px; border-radius: 2px; }
-  footer.stats {
-    display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px;
-    margin-top: 16px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+  .foot {
+    margin-top: 16px;
+    font-family: ui-monospace, monospace;
+    font-size: 12px; color: var(--muted);
+    display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline;
   }
-  @media (min-width: 640px) { footer.stats { grid-template-columns: repeat(5, 1fr); } }
-  footer.stats dt { text-transform: uppercase; letter-spacing: .06em; }
-  footer.stats dd { margin: 2px 0 0; color: var(--fg); }
-  .modes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 20px; }
+  .foot b { font-weight: 500; color: var(--fg); }
+  .foot .behind { color: var(--alert); }
+  .foot .ahead { color: var(--ok); }
+  .modes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 24px; }
   .modes button {
     min-height: 44px; border: 0; border-radius: 999px; cursor: pointer;
     font: 500 14px "Segoe UI", system-ui, sans-serif;
@@ -81,7 +83,7 @@
     <p class="num" id="acc">—<span>sun-h</span></p>
     <p class="line" id="status">—</p>
     <div class="chart-wrap">
-      <svg id="chart" viewBox="0 0 720 288" role="img" aria-label="Cumulative light today"></svg>
+      <svg id="chart" viewBox="0 0 720 320" role="img" aria-label="Cumulative light today"></svg>
       <div class="tip" id="tip" hidden></div>
     </div>
     <div class="legend">
@@ -89,13 +91,7 @@
       <span><i class="sw act"></i>Actual</span>
       <span><i class="sw gap" id="gapSw"></i><span id="gapLab">Behind</span></span>
     </div>
-    <footer class="stats">
-      <div><dt>Expected</dt><dd id="fExp">—</dd></div>
-      <div><dt>Actual</dt><dd id="fAct">—</dd></div>
-      <div><dt>Delta</dt><dd id="fDel">—</dd></div>
-      <div><dt>Window</dt><dd id="fWin">7:00–7:00 PM</dd></div>
-      <div><dt>Lamp</dt><dd id="fLamp">—</dd></div>
-    </footer>
+    <p class="foot" id="foot">—</p>
     <div class="modes">
       <button type="button" data-mode="auto">Auto</button>
       <button type="button" data-mode="on">Force on</button>
@@ -108,10 +104,33 @@ function fmt(n) { return Number(n).toFixed(1); }
 function clock(ms) {
   return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
+function axisClock(ms) {
+  const d = new Date(ms);
+  return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+function smoothPath(pts) {
+  if (!pts.length) return "";
+  if (pts.length === 1) return "M " + pts[0];
+  if (pts.length === 2) return "M " + pts[0] + " L " + pts[1];
+  const xy = pts.map((s) => s.split(",").map(Number));
+  let d = "M " + xy[0][0].toFixed(1) + " " + xy[0][1].toFixed(1);
+  for (let i = 0; i < xy.length - 1; i++) {
+    const p0 = xy[i - 1] || xy[i];
+    const p1 = xy[i];
+    const p2 = xy[i + 1];
+    const p3 = xy[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += " C " + c1x.toFixed(1) + " " + c1y.toFixed(1) + " " + c2x.toFixed(1) + " " + c2y.toFixed(1) + " " + p2[0].toFixed(1) + " " + p2[1].toFixed(1);
+  }
+  return d;
+}
 function draw(data) {
   const svg = document.getElementById("chart");
-  const pad = { l: 36, r: 12, t: 16, b: 28 };
-  const W = 720, H = 288, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  const pad = { l: 36, r: 18, t: 22, b: 28 };
+  const W = 720, H = 320, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
   const start = data.window.startMs, end = data.window.endMs;
   const span = Math.max(1, end - start);
   const target = data.target || 6;
@@ -122,10 +141,10 @@ function draw(data) {
   const act = (data.actual || []).filter((p) => p.t <= data.now);
   const last = act[act.length - 1];
   const nowT = Math.min(Math.max(data.now, start), end);
-  const expLine = exp.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1)).join(" ");
-  const actLine = act.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1)).join(" ");
+  const expPts = exp.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+  const actPts = act.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
   const under = last && act.length
-    ? x(act[0].t).toFixed(1) + "," + y(0).toFixed(1) + " " + actLine + " " + x(last.t).toFixed(1) + "," + y(0).toFixed(1)
+    ? x(act[0].t).toFixed(1) + "," + y(0).toFixed(1) + " " + actPts.join(" ") + " " + x(last.t).toFixed(1) + "," + y(0).toFixed(1)
     : "";
   let gap = "";
   if (last && exp.length && act.length > 1) {
@@ -136,17 +155,19 @@ function draw(data) {
   }
   const behind = data.delta < -0.03;
   const ticks = [0, .25, .5, .75, 1].map((f) => start + f * span);
+  const nowOnRight = (nowT - start) / span > 0.88;
   const parts = [];
   ticks.forEach((t) => {
-    parts.push(`<text x="${x(t)}" y="${H - 8}" text-anchor="middle" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${clock(t)}</text>`);
+    parts.push(`<text x="${x(t)}" y="${H - 8}" text-anchor="middle" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${axisClock(t)}</text>`);
   });
   parts.push(`<text x="4" y="${y(target) + 4}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${fmt(target)}</text>`);
   parts.push(`<text x="4" y="${y(0)}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">0</text>`);
   if (under) parts.push(`<polygon points="${under}" fill="#c4a574" opacity="0.12"/>`);
   if (gap) parts.push(`<polygon points="${gap}" fill="${behind ? "#c47a6a" : "#8fba8a"}" opacity="0.22"/>`);
-  if (expLine) parts.push(`<polyline points="${expLine}" fill="none" stroke="#8a9386" stroke-width="1.5" stroke-dasharray="5 5" stroke-linejoin="round"/>`);
-  if (actLine) parts.push(`<polyline points="${actLine}" fill="none" stroke="#c4a574" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`);
-  parts.push(`<line x1="${x(nowT)}" x2="${x(nowT)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="#e8eee6" stroke-width="1" opacity="0.35"/>`);
+  if (expPts.length) parts.push(`<path d="${smoothPath(expPts)}" fill="none" stroke="#8a9386" stroke-width="1.5" stroke-dasharray="5 5" stroke-linejoin="round"/>`);
+  if (actPts.length) parts.push(`<path d="${smoothPath(actPts)}" fill="none" stroke="#c4a574" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>`);
+  parts.push(`<line x1="${x(nowT)}" x2="${x(nowT)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="#e8eee6" stroke-width="1" opacity="0.4"/>`);
+  parts.push(`<text x="${x(nowT) + (nowOnRight ? -8 : 6)}" y="${pad.t - 6}" text-anchor="${nowOnRight ? "end" : "start"}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">now</text>`);
   if (last) parts.push(`<circle cx="${x(last.t)}" cy="${y(last.v)}" r="4.5" fill="#c4a574"/>`);
   svg.innerHTML = parts.join("");
   svg._map = { start, span, x, pad, iw, W, data };
@@ -162,14 +183,17 @@ function apply(data) {
   const st = document.getElementById("status");
   st.textContent = line;
   st.className = "line " + (behind ? "behind" : "ahead");
-  document.getElementById("fExp").textContent = fmt(data.expectedNow) + " sun-h";
-  document.getElementById("fAct").textContent = fmt(data.accumulated) + " sun-h";
-  document.getElementById("fDel").textContent = (data.delta >= 0 ? "+" : "−") + mag;
-  document.getElementById("fDel").style.color = behind ? "var(--alert)" : "var(--ok)";
-  document.getElementById("fWin").textContent = data.window.start + "–" + data.window.end;
-  document.getElementById("fLamp").textContent = data.lamp
-    ? (data.lampSince ? ("ON since " + clock(data.lampSince)) : "ON")
+  const lampTxt = data.lamp
+    ? (data.lampSince ? ("ON since " + axisClock(data.lampSince)) : "ON")
     : "OFF";
+  const win = (data.window.start || "07:00") + "–" + (data.window.end || "19:00");
+  document.getElementById("foot").innerHTML =
+    "Expected <b>" + fmt(data.expectedNow) + "</b>" +
+    " <span>·</span> Actual <b>" + fmt(data.accumulated) + "</b>" +
+    " <span>·</span> Delta <b class=\"" + (behind ? "behind" : "ahead") + "\">" +
+    (data.delta >= 0 ? "+" : "−") + mag + "</b>" +
+    " <span>·</span> Window <b>" + win + "</b>" +
+    " <span>·</span> Lamp <b>" + lampTxt + "</b>";
   document.getElementById("gapLab").textContent = behind ? "Behind" : "Ahead";
   document.getElementById("gapSw").style.background = behind ? "var(--alert)" : "var(--ok)";
   document.querySelectorAll(".modes button").forEach((b) => {
@@ -194,11 +218,11 @@ document.querySelectorAll(".modes button").forEach((b) => {
 });
 const svg = document.getElementById("chart");
 const tip = document.getElementById("tip");
-svg.addEventListener("mousemove", (e) => {
+function tipAt(clientX) {
   const m = svg._map;
   if (!m) return;
   const r = svg.getBoundingClientRect();
-  const px = ((e.clientX - r.left) / r.width) * m.W;
+  const px = ((clientX - r.left) / r.width) * m.W;
   const t = m.start + ((px - m.pad.l) / m.iw) * m.span;
   const data = window._light;
   if (!data) return;
@@ -208,11 +232,14 @@ svg.addEventListener("mousemove", (e) => {
   const d = act.v - exp.v;
   tip.hidden = false;
   tip.style.left = Math.min(70, Math.max(4, ((t - m.start) / m.span) * 100)) + "%";
-  tip.style.top = "8px";
+  tip.style.top = "28px";
   tip.innerHTML = clock(t) + "<br>Exp " + fmt(exp.v) + "<br>Act " + fmt(act.v)
     + "<br>" + (d >= 0 ? "+" : "−") + fmt(Math.abs(d)) + " · " + (act.lamp ? "lamp ON" : "lamp OFF");
-});
-svg.addEventListener("mouseleave", () => { tip.hidden = true; });
+}
+svg.addEventListener("mousemove", (e) => tipAt(e.clientX));
+ svg.addEventListener("mouseleave", () => { tip.hidden = true; });
+svg.addEventListener("touchstart", (e) => { if (e.touches[0]) tipAt(e.touches[0].clientX); }, { passive: true });
+svg.addEventListener("touchmove", (e) => { if (e.touches[0]) tipAt(e.touches[0].clientX); }, { passive: true });
 load();
 setInterval(load, 5000);
 </script>
