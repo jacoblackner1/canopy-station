@@ -225,11 +225,9 @@ STATE["profile"] = _p0["label"]
 STATE["plant_id"] = _p0["id"]
 
 
-def health(green: float, moisture: float, profile: dict, sensors_ok: bool) -> tuple[str, str]:
+def health(moisture: float, profile: dict, sensors_ok: bool) -> tuple[str, str]:
     if not sensors_ok:
         return "Waiting for sensors", "muted"
-    if green < 0.22:
-        return "Thinning", "alert"
     if moisture < profile["low"]:
         return "Too dry", "warn"
     if moisture > profile["high"]:
@@ -239,11 +237,10 @@ def health(green: float, moisture: float, profile: dict, sensors_ok: bool) -> tu
 
 def refresh_status() -> None:
     with LOCK:
-        green = STATE["green"]
         moisture = STATE["moisture"]
         sensors_ok = STATE["sensors_ok"]
         profile = current_profile()
-        short, tone = health(green, moisture, profile, sensors_ok)
+        short, tone = health(moisture, profile, sensors_ok)
         STATE["profile"] = profile["label"]
         STATE["plant_id"] = profile["id"]
         STATE["status"] = short

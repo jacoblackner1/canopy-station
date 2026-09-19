@@ -176,7 +176,7 @@ Keep sensor wires away from the lamp cord. Do not power a LED strip from the Nan
 - Water pulse is **1 second**
 - Every **5 minutes**, if soil is below that plant type’s low mark, pulse once
 - If light is below **40%**, turn the grow lamp on
-- Plant type from green cover: lush > 45%, standard > 25%, else succulent
+- Plant type is the Lush / Standard / Succulent button — the camera never picks it
 - Auto water / lamp **wait** until a real sensor line has been parsed
 
 Manual Water / Lamp buttons still work anytime.

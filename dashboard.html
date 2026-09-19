@@ -259,7 +259,7 @@ async function refresh() {
     markPlant(s.plant_id || "standard", s.low, s.high, s.profile);
     meter(document.getElementById("m-moist"), "Moisture", s.moisture, s.low, s.high, ready);
     meter(document.getElementById("m-light"), "Light", s.light, 40, null, ready);
-    meter(document.getElementById("m-green"), "Green", num(s.green) * 100, 25, null, true);
+    meter(document.getElementById("m-green"), "Green", num(s.green) * 100, null, null, true);
     meter(document.getElementById("m-yellow"), "Yellow", num(s.yellow) * 100, null, 15, true);
     document.getElementById("pulse").hidden = !s.pump;
     document.getElementById("lampFlag").hidden = !s.lamp || s.pump;
@@ -365,7 +365,7 @@ if (!KIOSK) {
 }
 meter(document.getElementById("m-moist"), "Moisture", 0, 40, 70, false);
 meter(document.getElementById("m-light"), "Light", 0, 40, null, false);
-meter(document.getElementById("m-green"), "Green", 0, 25, null, true);
+meter(document.getElementById("m-green"), "Green", 0, null, null, true);
 meter(document.getElementById("m-yellow"), "Yellow", 0, null, 15, true);
 tickClock();
 refresh();
