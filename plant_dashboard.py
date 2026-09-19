@@ -666,7 +666,10 @@ def set_plant(kind: str):
     if str(kind or "").strip().lower() != profile["id"]:
         return jsonify({"ok": False, "error": "unknown plant"}), 400
     CFG["plantKind"] = profile["id"]
-    save_cfg(CFG)
+    try:
+        save_cfg(CFG)
+    except OSError as exc:
+        print(f"plant save failed: {exc}", flush=True)
     refresh_status()
     print(f"plant {profile['id']} moisture {profile['low']}-{profile['high']}%", flush=True)
     return jsonify(
