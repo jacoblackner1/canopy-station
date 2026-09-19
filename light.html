@@ -102,11 +102,23 @@
 <script>
 function fmt(n) { return Number(n).toFixed(1); }
 function clock(ms) {
-  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
-function axisClock(ms) {
-  const d = new Date(ms);
-  return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0");
+function axisClock(ms, isEnd) {
+  if (isEnd) return "24:00";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date(ms));
+  const h = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const m = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return String(Number(h) % 24) + ":" + m;
 }
 function smoothPath(pts) {
   if (!pts.length) return "";
@@ -157,8 +169,8 @@ function draw(data) {
   const ticks = [0, .25, .5, .75, 1].map((f) => start + f * span);
   const nowOnRight = (nowT - start) / span > 0.88;
   const parts = [];
-  ticks.forEach((t) => {
-    parts.push(`<text x="${x(t)}" y="${H - 8}" text-anchor="middle" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${axisClock(t)}</text>`);
+  ticks.forEach((t, i) => {
+    parts.push(`<text x="${x(t)}" y="${H - 8}" text-anchor="middle" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${axisClock(t, i === ticks.length - 1)}</text>`);
   });
   parts.push(`<text x="4" y="${y(target) + 4}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${fmt(target)}</text>`);
   parts.push(`<text x="4" y="${y(0)}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">0</text>`);
@@ -186,7 +198,7 @@ function apply(data) {
   const lampTxt = data.lamp
     ? (data.lampSince ? ("ON since " + axisClock(data.lampSince)) : "ON")
     : "OFF";
-  const win = (data.window.start || "07:00") + "–" + (data.window.end || "19:00");
+  const win = (data.window.start || "00:00") + "–" + (data.window.end || "24:00");
   document.getElementById("foot").innerHTML =
     "Expected <b>" + fmt(data.expectedNow) + "</b>" +
     " <span>·</span> Actual <b>" + fmt(data.accumulated) + "</b>" +
@@ -237,7 +249,7 @@ function tipAt(clientX) {
     + "<br>" + (d >= 0 ? "+" : "−") + fmt(Math.abs(d)) + " · " + (act.lamp ? "lamp ON" : "lamp OFF");
 }
 svg.addEventListener("mousemove", (e) => tipAt(e.clientX));
- svg.addEventListener("mouseleave", () => { tip.hidden = true; });
+svg.addEventListener("mouseleave", () => { tip.hidden = true; });
 svg.addEventListener("touchstart", (e) => { if (e.touches[0]) tipAt(e.touches[0].clientX); }, { passive: true });
 svg.addEventListener("touchmove", (e) => { if (e.touches[0]) tipAt(e.touches[0].clientX); }, { passive: true });
 load();

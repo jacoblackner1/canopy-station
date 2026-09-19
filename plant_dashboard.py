@@ -18,8 +18,9 @@ import re
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import cv2
 import numpy as np
@@ -30,6 +31,7 @@ ROOT = Path(__file__).resolve().parent
 CFG_PATH = ROOT / "station.json"
 KIND_PATH = ROOT / "plant.kind"
 LIGHT_PATH = ROOT / "light-today.json"
+STATION_TZ = ZoneInfo("America/Los_Angeles")
 
 # 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
 # Typical capacitive: air ~550–700, water ~220–320.
@@ -275,6 +277,20 @@ def _hhmm(value: str, fallback: str) -> tuple[int, int]:
         return int(parts[0]), int(parts[1])
 
 
+def station_now() -> datetime:
+    return datetime.now(STATION_TZ)
+
+
+def day_bounds(now: datetime | None = None) -> tuple[datetime, datetime]:
+    now = now or station_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=STATION_TZ)
+    else:
+        now = now.astimezone(STATION_TZ)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight, midnight + timedelta(days=1)
+
+
 def light_window_minutes() -> tuple[int, int]:
     sh, sm = _hhmm(CFG.get("lightWindowStart"), "07:00")
     eh, em = _hhmm(CFG.get("lightWindowEnd"), "19:00")
@@ -287,7 +303,11 @@ def solar_progress(frac: float) -> float:
 
 
 def expected_light_at(now: datetime | None = None) -> float:
-    now = now or datetime.now()
+    now = now or station_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=STATION_TZ)
+    else:
+        now = now.astimezone(STATION_TZ)
     start_m, end_m = light_window_minutes()
     mins = now.hour * 60 + now.minute + now.second / 60.0
     target = float(CFG.get("lightDailyTarget") or 6.0)
@@ -301,19 +321,24 @@ def expected_light_at(now: datetime | None = None) -> float:
 
 
 def expected_series_payload(now: datetime | None = None) -> list[dict]:
-    now = now or datetime.now()
+    now = now or station_now()
     start_m, end_m = light_window_minutes()
     target = float(CFG.get("lightDailyTarget") or 6.0)
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start_ts = midnight.timestamp() + start_m * 60
-    end_ts = midnight.timestamp() + end_m * 60
+    midnight, next_mid = day_bounds(now)
+    start_ts = midnight.timestamp()
+    end_ts = next_mid.timestamp()
     step = 5 * 60
     out = []
     t = start_ts
-    span = max(1.0, end_ts - start_ts)
     while t <= end_ts + 1:
-        frac = (t - start_ts) / span
-        out.append({"t": int(t * 1000), "v": round(target * solar_progress(frac), 4), "lamp": False})
+        mins = (t - start_ts) / 60.0
+        if mins <= start_m:
+            v = 0.0
+        elif mins >= end_m:
+            v = target
+        else:
+            v = target * solar_progress((mins - start_m) / max(1.0, end_m - start_m))
+        out.append({"t": int(t * 1000), "v": round(v, 4), "lamp": False})
         t += step
     if not out or out[-1]["t"] < int(end_ts * 1000):
         out.append({"t": int(end_ts * 1000), "v": target, "lamp": False})
@@ -321,7 +346,11 @@ def expected_series_payload(now: datetime | None = None) -> list[dict]:
 
 
 def in_light_window(now: datetime | None = None) -> bool:
-    now = now or datetime.now()
+    now = now or station_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=STATION_TZ)
+    else:
+        now = now.astimezone(STATION_TZ)
     start_m, end_m = light_window_minutes()
     mins = now.hour * 60 + now.minute + now.second / 60.0
     return start_m <= mins < end_m
@@ -334,7 +363,7 @@ def load_light_day() -> None:
         data = json.loads(LIGHT_PATH.read_text())
     except Exception:
         return
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = station_now().strftime("%Y-%m-%d")
     if data.get("day") != today:
         return
     LIGHT["day"] = today
@@ -363,19 +392,20 @@ def save_light_day() -> None:
 
 
 def light_today_payload() -> dict:
-    now = datetime.now()
-    start_m, end_m = light_window_minutes()
-    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    now = station_now()
+    midnight, next_mid = day_bounds(now)
     expected_now = expected_light_at(now)
     acc = float(LIGHT["acc"])
     lamp = bool(STATE["lamp"])
     return {
         "now": int(now.timestamp() * 1000),
         "window": {
-            "start": CFG.get("lightWindowStart") or "07:00",
-            "end": CFG.get("lightWindowEnd") or "19:00",
-            "startMs": int((midnight.timestamp() + start_m * 60) * 1000),
-            "endMs": int((midnight.timestamp() + end_m * 60) * 1000),
+            "start": "00:00",
+            "end": "24:00",
+            "startMs": int(midnight.timestamp() * 1000),
+            "endMs": int(next_mid.timestamp() * 1000),
+            "dayStart": CFG.get("lightWindowStart") or "07:00",
+            "dayEnd": CFG.get("lightWindowEnd") or "19:00",
         },
         "target": float(CFG.get("lightDailyTarget") or 6.0),
         "expected": expected_series_payload(now),
@@ -391,7 +421,7 @@ def light_today_payload() -> dict:
 
 
 def light_tick() -> None:
-    now_dt = datetime.now()
+    now_dt = station_now()
     now = time.time()
     today = now_dt.strftime("%Y-%m-%d")
     if LIGHT["day"] != today:
@@ -408,8 +438,7 @@ def light_tick() -> None:
         intensity = float(STATE["light"]) / 100.0
         lamp = bool(STATE["lamp"])
         sensors_ok = bool(STATE["sensors_ok"])
-    if in_light_window(now_dt):
-        LIGHT["acc"] += intensity * dt_h
+    LIGHT["acc"] += intensity * dt_h
     samples = LIGHT["samples"]
     point = {"t": int(now * 1000), "v": round(LIGHT["acc"], 4), "lamp": lamp}
     if not samples or now * 1000 - samples[-1]["t"] >= 60_000:

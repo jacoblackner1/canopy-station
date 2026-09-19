@@ -141,7 +141,7 @@ The badge on the photo shows when the last still was taken. HDMI and phone/compu
 
 ## Today's light
 
-The live Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a day chart of accumulated sun-hours vs a solar-shaped expected curve (7:00–19:00, target 6.0 sun-h). Auto lamp now follows that curve (behind + hysteresis → ON, with a 5-minute minimum on-time). Force on/off lives on that page only. HDMI keeps the bar, no chart.
+The Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a **24-hour** chart of accumulated sun-hours (Pacific midnight to midnight) vs a solar-shaped expected curve that ramps 07:00–19:00 and holds at the daily target after that. Auto lamp still follows that daytime window (behind + hysteresis → ON, 5-minute minimum). Force on/off lives on that page only. HDMI keeps the bar, no chart.
 
 ## Calibrate moisture (this is what makes the % accurate)
 
