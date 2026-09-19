@@ -10,3 +10,4 @@ sentinel_env/
 .cloudflared/
 station.json
 plant.kind
+light-today.json

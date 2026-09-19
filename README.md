@@ -133,6 +133,10 @@ sudo systemctl restart canopy-station
 
 Then hard-refresh the phone/computer page. HDMI has no picker. If the type snaps back, the old process is still on port 5000 — restart, don’t start a second `python3`.
 
+## Today's light
+
+The live Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a day chart of accumulated sun-hours vs a solar-shaped expected curve (7:00–19:00, target 6.0 sun-h). Auto lamp now follows that curve (behind + hysteresis → ON, with a 5-minute minimum on-time). Force on/off lives on that page only. HDMI keeps the bar, no chart.
+
 ## Calibrate moisture (this is what makes the % accurate)
 
 The Nano sends **analog 0–1023**. Capacitive probes read **high in air, low in water**. The percentage is:
@@ -183,7 +187,7 @@ Keep sensor wires away from the lamp cord. Do not power a LED strip from the Nan
 
 - Water pulse is **1 second**
 - Every **5 minutes**, if soil is below that plant type’s low mark, pulse once
-- If light is below **40%**, turn the grow lamp on
+- If today’s accumulated light is behind the expected curve, turn the grow lamp on (5-minute minimum). Night: off.
 - Plant type is the Lush / Standard / Succulent button — the camera never picks it
 - Auto water / lamp **wait** until a real sensor line has been parsed
 

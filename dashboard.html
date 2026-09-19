@@ -120,6 +120,14 @@
     text-align: center; font-family: ui-monospace, monospace;
     font-size: 11px; color: var(--muted); margin: 0;
   }
+  .meter-link { color: inherit; text-decoration: none; display: block; }
+  .meter-link:focus-visible { outline: 2px solid var(--primary); border-radius: 8px; }
+  .light-hint {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    color: var(--muted); margin: 4px 0 0;
+  }
+  body.kiosk .light-hint { display: none; }
+  body.kiosk .meter-link { pointer-events: none; }
   .power {
     min-height: 40px; font-size: 13px; color: var(--muted);
     background: transparent;
@@ -169,7 +177,10 @@
         <p class="sub" id="profile">—</p>
       </div>
       <div class="meter" id="m-moist"></div>
-      <div class="meter" id="m-light"></div>
+      <a class="meter-link" href="/light" id="light-link">
+        <div class="meter" id="m-light"></div>
+        <p class="light-hint" id="lightHint">Today’s light</p>
+      </a>
       <div class="meter" id="m-green"></div>
       <div class="meter" id="m-yellow"></div>
       <div class="actions">
@@ -275,6 +286,14 @@ async function refresh() {
     const moistHigh = p ? p.high : s.high;
     meter(document.getElementById("m-moist"), "Moisture", s.moisture, moistLow, moistHigh, ready);
     meter(document.getElementById("m-light"), "Light", s.light, 40, null, ready);
+    const hint = document.getElementById("lightHint");
+    if (hint && s.light_delta != null) {
+      const mag = Math.abs(Number(s.light_delta)).toFixed(1);
+      const lampS = s.lamp ? "lamp ON" : "lamp OFF";
+      if (Math.abs(Number(s.light_delta)) < 0.03) hint.textContent = "on pace · " + lampS;
+      else if (s.light_delta < 0) hint.textContent = "−" + mag + " behind · " + lampS;
+      else hint.textContent = "+" + mag + " ahead · " + lampS;
+    }
     meter(document.getElementById("m-green"), "Green", num(s.green) * 100, null, null, true);
     meter(document.getElementById("m-yellow"), "Yellow", num(s.yellow) * 100, null, 15, true);
     document.getElementById("pulse").hidden = !s.pump;

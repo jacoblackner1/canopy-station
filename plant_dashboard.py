@@ -12,11 +12,13 @@ Capacitive probes read HIGH when dry and LOW when wet.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -27,6 +29,7 @@ from flask import Flask, Response, jsonify, make_response, request
 ROOT = Path(__file__).resolve().parent
 CFG_PATH = ROOT / "station.json"
 KIND_PATH = ROOT / "plant.kind"
+LIGHT_PATH = ROOT / "light-today.json"
 
 # 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
 # Typical capacitive: air ~550–700, water ~220–320.
@@ -38,6 +41,12 @@ DEFAULTS = {
     "autoSeconds": 300,
     "waterPulseMs": 1000,
     "lightOnBelow": 40,
+    "lightWindowStart": "07:00",
+    "lightWindowEnd": "19:00",
+    "lightDailyTarget": 6.0,
+    "lightHysteresis": 0.15,
+    "lightMinOnSec": 300,
+    "lightOverride": "auto",
     "lampMoistDelta": 0,
     "flaskHost": "0.0.0.0",
     "flaskPort": 5000,
@@ -108,6 +117,14 @@ STATE = {
 
 # Learned when the lamp toggles: analog jump that is electrical, not soil.
 LAMP_EDGE = {"at": 0.0, "before": None, "turning_on": False, "learned": False}
+LIGHT = {
+    "day": "",
+    "acc": 0.0,
+    "last_t": 0.0,
+    "samples": [],
+    "lamp_since": None,
+    "lamp_on_at": 0.0,
+}
 
 _CPU_TEMP_PATH: Path | None = None
 _CPU_TEMP_LOGGED = False
@@ -244,6 +261,194 @@ def write_kind(kind: str) -> None:
 def current_profile() -> dict:
     return profile_by_id(read_kind())
 
+
+def _hhmm(value: str, fallback: str) -> tuple[int, int]:
+    raw = str(value or fallback)
+    parts = raw.strip().split(":")
+    try:
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        return max(0, min(23, h)), max(0, min(59, m))
+    except ValueError:
+        parts = fallback.split(":")
+        return int(parts[0]), int(parts[1])
+
+
+def light_window_minutes() -> tuple[int, int]:
+    sh, sm = _hhmm(CFG.get("lightWindowStart"), "07:00")
+    eh, em = _hhmm(CFG.get("lightWindowEnd"), "19:00")
+    return sh * 60 + sm, eh * 60 + em
+
+
+def solar_progress(frac: float) -> float:
+    p = max(0.0, min(1.0, frac))
+    return 0.5 * (1.0 - math.cos(math.pi * p))
+
+
+def expected_light_at(now: datetime | None = None) -> float:
+    now = now or datetime.now()
+    start_m, end_m = light_window_minutes()
+    mins = now.hour * 60 + now.minute + now.second / 60.0
+    target = float(CFG.get("lightDailyTarget") or 6.0)
+    if end_m <= start_m:
+        return 0.0
+    if mins <= start_m:
+        return 0.0
+    if mins >= end_m:
+        return target
+    return target * solar_progress((mins - start_m) / (end_m - start_m))
+
+
+def expected_series_payload(now: datetime | None = None) -> list[dict]:
+    now = now or datetime.now()
+    start_m, end_m = light_window_minutes()
+    target = float(CFG.get("lightDailyTarget") or 6.0)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_ts = midnight.timestamp() + start_m * 60
+    end_ts = midnight.timestamp() + end_m * 60
+    step = 5 * 60
+    out = []
+    t = start_ts
+    span = max(1.0, end_ts - start_ts)
+    while t <= end_ts + 1:
+        frac = (t - start_ts) / span
+        out.append({"t": int(t * 1000), "v": round(target * solar_progress(frac), 4), "lamp": False})
+        t += step
+    if not out or out[-1]["t"] < int(end_ts * 1000):
+        out.append({"t": int(end_ts * 1000), "v": target, "lamp": False})
+    return out
+
+
+def in_light_window(now: datetime | None = None) -> bool:
+    now = now or datetime.now()
+    start_m, end_m = light_window_minutes()
+    mins = now.hour * 60 + now.minute + now.second / 60.0
+    return start_m <= mins < end_m
+
+
+def load_light_day() -> None:
+    if not LIGHT_PATH.exists():
+        return
+    try:
+        data = json.loads(LIGHT_PATH.read_text())
+    except Exception:
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    if data.get("day") != today:
+        return
+    LIGHT["day"] = today
+    LIGHT["acc"] = float(data.get("acc") or 0)
+    LIGHT["samples"] = list(data.get("samples") or [])[-720:]
+    LIGHT["lamp_since"] = data.get("lamp_since")
+    LIGHT["last_t"] = float(data.get("last_t") or 0)
+
+
+def save_light_day() -> None:
+    try:
+        LIGHT_PATH.write_text(
+            json.dumps(
+                {
+                    "day": LIGHT["day"],
+                    "acc": LIGHT["acc"],
+                    "samples": LIGHT["samples"][-720:],
+                    "lamp_since": LIGHT["lamp_since"],
+                    "last_t": LIGHT["last_t"],
+                }
+            )
+            + "\n"
+        )
+    except OSError as exc:
+        print(f"light-today save failed: {exc}", flush=True)
+
+
+def light_today_payload() -> dict:
+    now = datetime.now()
+    start_m, end_m = light_window_minutes()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    expected_now = expected_light_at(now)
+    acc = float(LIGHT["acc"])
+    lamp = bool(STATE["lamp"])
+    return {
+        "now": int(now.timestamp() * 1000),
+        "window": {
+            "start": CFG.get("lightWindowStart") or "07:00",
+            "end": CFG.get("lightWindowEnd") or "19:00",
+            "startMs": int((midnight.timestamp() + start_m * 60) * 1000),
+            "endMs": int((midnight.timestamp() + end_m * 60) * 1000),
+        },
+        "target": float(CFG.get("lightDailyTarget") or 6.0),
+        "expected": expected_series_payload(now),
+        "actual": LIGHT["samples"],
+        "accumulated": acc,
+        "expectedNow": expected_now,
+        "delta": acc - expected_now,
+        "lamp": lamp,
+        "lampSince": int(LIGHT["lamp_since"] * 1000) if LIGHT["lamp_since"] else None,
+        "override": CFG.get("lightOverride") or "auto",
+        "unit": "sun-h",
+    }
+
+
+def light_tick() -> None:
+    now_dt = datetime.now()
+    now = time.time()
+    today = now_dt.strftime("%Y-%m-%d")
+    if LIGHT["day"] != today:
+        LIGHT["day"] = today
+        LIGHT["acc"] = 0.0
+        LIGHT["samples"] = []
+        LIGHT["last_t"] = now
+        LIGHT["lamp_since"] = now if STATE["lamp"] else None
+        LIGHT["lamp_on_at"] = now if STATE["lamp"] else 0.0
+    last = LIGHT["last_t"] or now
+    dt_h = max(0.0, min(0.05, (now - last) / 3600.0))
+    LIGHT["last_t"] = now
+    with LOCK:
+        intensity = float(STATE["light"]) / 100.0
+        lamp = bool(STATE["lamp"])
+        sensors_ok = bool(STATE["sensors_ok"])
+    if in_light_window(now_dt):
+        LIGHT["acc"] += intensity * dt_h
+    samples = LIGHT["samples"]
+    point = {"t": int(now * 1000), "v": round(LIGHT["acc"], 4), "lamp": lamp}
+    if not samples or now * 1000 - samples[-1]["t"] >= 60_000:
+        samples.append(point)
+        LIGHT["samples"] = samples[-720:]
+        if len(LIGHT["samples"]) % 8 == 0:
+            save_light_day()
+    else:
+        samples[-1] = point
+    override = str(CFG.get("lightOverride") or "auto").lower()
+    if override == "auto" and not sensors_ok:
+        return
+    if override == "on":
+        want = True
+    elif override == "off":
+        want = False
+    else:
+        expected = expected_light_at(now_dt)
+        hyst = float(CFG.get("lightHysteresis") or 0.15)
+        min_on = float(CFG.get("lightMinOnSec") or 300)
+        behind = LIGHT["acc"] < expected - hyst
+        if not in_light_window(now_dt):
+            want = False
+        elif behind:
+            want = True
+        elif lamp and LIGHT["lamp_on_at"] and now - LIGHT["lamp_on_at"] < min_on:
+            want = True
+        else:
+            want = False
+    if want != lamp:
+        set_lamp(want)
+        LIGHT["lamp_since"] = now if want else None
+        LIGHT["lamp_on_at"] = now if want else 0.0
+        save_light_day()
+    elif want and not LIGHT["lamp_since"]:
+        LIGHT["lamp_since"] = now
+        LIGHT["lamp_on_at"] = now
+
+
+load_light_day()
 
 _p0 = current_profile()
 STATE["profile"] = _p0["label"]
@@ -508,13 +713,14 @@ def auto_loop() -> None:
     while True:
         time.sleep(1)
         maybe_reload_cfg()
+        try:
+            light_tick()
+        except Exception as exc:
+            print(f"light tick: {exc}", flush=True)
         now = time.time()
         with LOCK:
             last = STATE["last_auto"]
             moisture = STATE["moisture"]
-            light = STATE["light"]
-            green = STATE["green"]
-            lamp = STATE["lamp"]
             sensors_ok = STATE["sensors_ok"]
         if last == 0:
             with LOCK:
@@ -529,8 +735,6 @@ def auto_loop() -> None:
         profile = current_profile()
         if moisture < profile["low"]:
             threading.Thread(target=water_pulse, daemon=True).start()
-        if light < CFG["lightOnBelow"] and not lamp:
-            set_lamp(True)
 
 
 def capture_loop(cap) -> None:
@@ -601,6 +805,8 @@ def status():
     profile = current_profile()
     last = s["last_auto"] or time.time()
     auto_in = max(0.0, CFG["autoSeconds"] - (time.time() - last))
+    expected_now = expected_light_at()
+    acc = float(LIGHT["acc"])
     return jsonify(
         {
             "moisture": float(s["moisture"]),
@@ -628,6 +834,10 @@ def status():
             "lamp_delta": int(s.get("lamp_delta") or 0),
             "cpu_temp": cpu_temp_c(),
             "app": "plant-select",
+            "light_acc": acc,
+            "light_expected": expected_now,
+            "light_delta": acc - expected_now,
+            "light_override": CFG.get("lightOverride") or "auto",
         }
     )
 
@@ -643,7 +853,74 @@ def light():
     with LOCK:
         on = not STATE["lamp"]
     set_lamp(on)
-    return jsonify({"ok": True, "lamp": on})
+    CFG["lightOverride"] = "on" if on else "off"
+    try:
+        save_cfg(CFG)
+    except OSError:
+        pass
+    LIGHT["lamp_since"] = time.time() if on else None
+    LIGHT["lamp_on_at"] = time.time() if on else 0.0
+    return jsonify({"ok": True, "lamp": on, "override": CFG["lightOverride"]})
+
+
+@app.get("/light")
+def light_page():
+    path = ROOT / "light.html"
+    if not path.exists():
+        return "light.html missing", 404
+    resp = make_response(path.read_text())
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/light/today")
+def api_light_today():
+    return jsonify(light_today_payload())
+
+
+@app.post("/api/light/override")
+def api_light_override():
+    body = request.get_json(silent=True) or {}
+    mode = str(body.get("mode") or "").strip().lower()
+    if mode not in ("auto", "on", "off"):
+        return jsonify({"ok": False, "error": "mode"}), 400
+    CFG["lightOverride"] = mode
+    try:
+        save_cfg(CFG)
+    except OSError:
+        pass
+    if mode == "on":
+        set_lamp(True)
+        LIGHT["lamp_since"] = time.time()
+        LIGHT["lamp_on_at"] = time.time()
+    elif mode == "off":
+        set_lamp(False)
+        LIGHT["lamp_since"] = None
+        LIGHT["lamp_on_at"] = 0.0
+    save_light_day()
+    payload = light_today_payload()
+    payload["ok"] = True
+    return jsonify(payload)
+
+
+@app.post("/api/light/config")
+def api_light_config():
+    body = request.get_json(silent=True) or {}
+    if "windowStart" in body:
+        CFG["lightWindowStart"] = str(body["windowStart"])
+    if "windowEnd" in body:
+        CFG["lightWindowEnd"] = str(body["windowEnd"])
+    if "dailyTarget" in body:
+        CFG["lightDailyTarget"] = float(body["dailyTarget"])
+    if "hysteresis" in body:
+        CFG["lightHysteresis"] = float(body["hysteresis"])
+    try:
+        save_cfg(CFG)
+    except OSError:
+        pass
+    payload = light_today_payload()
+    payload["ok"] = True
+    return jsonify(payload)
 
 
 @app.post("/calibrate/<kind>")
@@ -748,7 +1025,7 @@ def poweroff():
 
 @app.after_request
 def no_store(resp):
-    if request.path in ("/status", "/", "/kiosk"):
+    if request.path in ("/status", "/", "/kiosk", "/light", "/api/light/today"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 

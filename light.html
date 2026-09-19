@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Today's light · Canopy</title>
+<style>
+  :root {
+    --bg: #0c0f0c; --surface: #151a15; --surface-2: #1c231c;
+    --fg: #e8eee6; --muted: #8a9386; --subtle: #5e675b;
+    --primary: #9cba8b; --primary-fg: #0c0f0c;
+    --warn: #c4a574; --alert: #c47a6a; --ok: #8fba8a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%;
+    background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; min-height: 44px;
+  }
+  a.back {
+    color: var(--muted); text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 44px; padding: 0 8px; border-radius: 8px;
+  }
+  a.back:hover { color: var(--fg); background: var(--surface-2); }
+  main { padding: 8px 16px 24px; max-width: 56rem; margin: 0 auto; }
+  .card {
+    background: var(--surface); border-radius: 20px;
+    padding: 20px 20px 24px;
+    box-shadow: 0 0 0 1px rgba(232,238,230,.08);
+  }
+  .k { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .num { font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.4rem, 8vw, 3.2rem); margin: 4px 0 0; letter-spacing: -0.03em; line-height: 1; }
+  .num span { font-family: inherit; font-size: 1rem; color: var(--muted); margin-left: 8px; font-style: normal; }
+  .line { margin: 10px 0 0; font-size: 15px; }
+  .line.behind { color: var(--alert); }
+  .line.ahead { color: var(--ok); }
+  svg { width: 100%; height: auto; display: block; margin-top: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .sw { display: inline-block; width: 16px; height: 2px; vertical-align: middle; margin-right: 6px; }
+  .sw.exp { border-top: 1.5px dashed var(--muted); height: 0; }
+  .sw.act { background: var(--warn); }
+  .sw.gap { width: 8px; height: 8px; border-radius: 2px; }
+  footer.stats {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 16px;
+    margin-top: 16px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+  }
+  @media (min-width: 640px) { footer.stats { grid-template-columns: repeat(5, 1fr); } }
+  footer.stats dt { text-transform: uppercase; letter-spacing: .06em; }
+  footer.stats dd { margin: 2px 0 0; color: var(--fg); }
+  .modes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 20px; }
+  .modes button {
+    min-height: 44px; border: 0; border-radius: 999px; cursor: pointer;
+    font: 500 14px "Segoe UI", system-ui, sans-serif;
+    background: transparent; color: var(--muted);
+    box-shadow: 0 0 0 1px rgba(232,238,230,.14);
+  }
+  .modes button.on { background: var(--primary); color: var(--primary-fg); box-shadow: none; }
+  .tip {
+    position: absolute; pointer-events: none;
+    background: var(--surface-2); color: var(--fg);
+    font-family: ui-monospace, monospace; font-size: 12px;
+    padding: 6px 8px; border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(232,238,230,.12);
+  }
+  .chart-wrap { position: relative; }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← Back</a>
+  <p style="margin:0;font-family:Georgia,serif">Canopy</p>
+</header>
+<main>
+  <section class="card">
+    <p class="k">Today's light</p>
+    <p class="num" id="acc">—<span>sun-h</span></p>
+    <p class="line" id="status">—</p>
+    <div class="chart-wrap">
+      <svg id="chart" viewBox="0 0 720 288" role="img" aria-label="Cumulative light today"></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <div class="legend">
+      <span><i class="sw exp"></i>Expected</span>
+      <span><i class="sw act"></i>Actual</span>
+      <span><i class="sw gap" id="gapSw"></i><span id="gapLab">Behind</span></span>
+    </div>
+    <footer class="stats">
+      <div><dt>Expected</dt><dd id="fExp">—</dd></div>
+      <div><dt>Actual</dt><dd id="fAct">—</dd></div>
+      <div><dt>Delta</dt><dd id="fDel">—</dd></div>
+      <div><dt>Window</dt><dd id="fWin">7:00–7:00 PM</dd></div>
+      <div><dt>Lamp</dt><dd id="fLamp">—</dd></div>
+    </footer>
+    <div class="modes">
+      <button type="button" data-mode="auto">Auto</button>
+      <button type="button" data-mode="on">Force on</button>
+      <button type="button" data-mode="off">Force off</button>
+    </div>
+  </section>
+</main>
+<script>
+function fmt(n) { return Number(n).toFixed(1); }
+function clock(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function draw(data) {
+  const svg = document.getElementById("chart");
+  const pad = { l: 36, r: 12, t: 16, b: 28 };
+  const W = 720, H = 288, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  const start = data.window.startMs, end = data.window.endMs;
+  const span = Math.max(1, end - start);
+  const target = data.target || 6;
+  const ymax = Math.max(target, data.accumulated || 0) * 1.08;
+  const x = (t) => pad.l + ((t - start) / span) * iw;
+  const y = (v) => pad.t + ih - (v / Math.max(0.01, ymax)) * ih;
+  const exp = data.expected || [];
+  const act = (data.actual || []).filter((p) => p.t <= data.now);
+  const last = act[act.length - 1];
+  const nowT = Math.min(Math.max(data.now, start), end);
+  const expLine = exp.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1)).join(" ");
+  const actLine = act.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1)).join(" ");
+  const under = last && act.length
+    ? x(act[0].t).toFixed(1) + "," + y(0).toFixed(1) + " " + actLine + " " + x(last.t).toFixed(1) + "," + y(0).toFixed(1)
+    : "";
+  let gap = "";
+  if (last && exp.length && act.length > 1) {
+    const upto = exp.filter((p) => p.t <= last.t);
+    const fwd = upto.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+    const back = act.slice().reverse().map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+    gap = fwd.join(" ") + " " + back.join(" ");
+  }
+  const behind = data.delta < -0.03;
+  const ticks = [0, .25, .5, .75, 1].map((f) => start + f * span);
+  const parts = [];
+  ticks.forEach((t) => {
+    parts.push(`<text x="${x(t)}" y="${H - 8}" text-anchor="middle" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${clock(t)}</text>`);
+  });
+  parts.push(`<text x="4" y="${y(target) + 4}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${fmt(target)}</text>`);
+  parts.push(`<text x="4" y="${y(0)}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">0</text>`);
+  if (under) parts.push(`<polygon points="${under}" fill="#c4a574" opacity="0.12"/>`);
+  if (gap) parts.push(`<polygon points="${gap}" fill="${behind ? "#c47a6a" : "#8fba8a"}" opacity="0.22"/>`);
+  if (expLine) parts.push(`<polyline points="${expLine}" fill="none" stroke="#8a9386" stroke-width="1.5" stroke-dasharray="5 5" stroke-linejoin="round"/>`);
+  if (actLine) parts.push(`<polyline points="${actLine}" fill="none" stroke="#c4a574" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`);
+  parts.push(`<line x1="${x(nowT)}" x2="${x(nowT)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="#e8eee6" stroke-width="1" opacity="0.35"/>`);
+  if (last) parts.push(`<circle cx="${x(last.t)}" cy="${y(last.v)}" r="4.5" fill="#c4a574"/>`);
+  svg.innerHTML = parts.join("");
+  svg._map = { start, span, x, pad, iw, W, data };
+}
+function apply(data) {
+  const behind = data.delta < -0.03;
+  document.getElementById("acc").innerHTML = fmt(data.accumulated) + "<span>sun-h</span>";
+  const mag = fmt(Math.abs(data.delta));
+  const lampS = data.lamp ? "lamp ON" : "lamp OFF";
+  let line = "On pace · " + lampS;
+  if (data.delta < -0.03) line = "−" + mag + " behind expected · " + lampS;
+  else if (data.delta > 0.03) line = "+" + mag + " ahead of expected · " + lampS;
+  const st = document.getElementById("status");
+  st.textContent = line;
+  st.className = "line " + (behind ? "behind" : "ahead");
+  document.getElementById("fExp").textContent = fmt(data.expectedNow) + " sun-h";
+  document.getElementById("fAct").textContent = fmt(data.accumulated) + " sun-h";
+  document.getElementById("fDel").textContent = (data.delta >= 0 ? "+" : "−") + mag;
+  document.getElementById("fDel").style.color = behind ? "var(--alert)" : "var(--ok)";
+  document.getElementById("fWin").textContent = data.window.start + "–" + data.window.end;
+  document.getElementById("fLamp").textContent = data.lamp
+    ? (data.lampSince ? ("ON since " + clock(data.lampSince)) : "ON")
+    : "OFF";
+  document.getElementById("gapLab").textContent = behind ? "Behind" : "Ahead";
+  document.getElementById("gapSw").style.background = behind ? "var(--alert)" : "var(--ok)";
+  document.querySelectorAll(".modes button").forEach((b) => {
+    b.classList.toggle("on", b.getAttribute("data-mode") === data.override);
+  });
+  draw(data);
+  window._light = data;
+}
+async function load() {
+  const res = await fetch("/api/light/today", { cache: "no-store" });
+  apply(await res.json());
+}
+document.querySelectorAll(".modes button").forEach((b) => {
+  b.onclick = async () => {
+    const res = await fetch("/api/light/override", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: b.getAttribute("data-mode") }),
+    });
+    apply(await res.json());
+  };
+});
+const svg = document.getElementById("chart");
+const tip = document.getElementById("tip");
+svg.addEventListener("mousemove", (e) => {
+  const m = svg._map;
+  if (!m) return;
+  const r = svg.getBoundingClientRect();
+  const px = ((e.clientX - r.left) / r.width) * m.W;
+  const t = m.start + ((px - m.pad.l) / m.iw) * m.span;
+  const data = window._light;
+  if (!data) return;
+  const nearest = (arr) => arr.reduce((b, p) => Math.abs(p.t - t) < Math.abs(b.t - t) ? p : b);
+  const exp = nearest(data.expected);
+  const act = data.actual.length ? nearest(data.actual) : { v: 0, lamp: false };
+  const d = act.v - exp.v;
+  tip.hidden = false;
+  tip.style.left = Math.min(70, Math.max(4, ((t - m.start) / m.span) * 100)) + "%";
+  tip.style.top = "8px";
+  tip.innerHTML = clock(t) + "<br>Exp " + fmt(exp.v) + "<br>Act " + fmt(act.v)
+    + "<br>" + (d >= 0 ? "+" : "−") + fmt(Math.abs(d)) + " · " + (act.lamp ? "lamp ON" : "lamp OFF");
+});
+svg.addEventListener("mouseleave", () => { tip.hidden = true; });
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>
