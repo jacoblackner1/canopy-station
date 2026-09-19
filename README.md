@@ -133,6 +133,12 @@ sudo systemctl restart canopy-station
 
 Then hard-refresh the phone/computer page. HDMI has no picker. If the type snaps back, the old process is still on port 5000 — restart, don’t start a second `python3`.
 
+## Camera snapshot
+
+The dashboard shows a **still**, not a live stream. A new frame is taken on the same tick as auto-water (default **5 minutes**, `autoSeconds` in `station.json`). Green / yellow meters come from that still. Between ticks the USB camera is closed so the Pi is not encoding video all day.
+
+The badge on the photo shows when the last still was taken. HDMI and phone/computer share that image.
+
 ## Today's light
 
 The live Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a day chart of accumulated sun-hours vs a solar-shaped expected curve (7:00–19:00, target 6.0 sun-h). Auto lamp now follows that curve (behind + hysteresis → ON, with a 5-minute minimum on-time). Force on/off lives on that page only. HDMI keeps the bar, no chart.

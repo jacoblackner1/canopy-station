@@ -110,6 +110,7 @@ STATE = {
     "camera": None,
     "serial": None,
     "last_auto": 0.0,
+    "snapshot_at": 0.0,
     "last_line": "",
     "sensors_ok": False,
     "lamp_delta": 0,
@@ -709,7 +710,52 @@ def serial_loop() -> None:
             time.sleep(2)
 
 
+def grab_snapshot() -> bool:
+    """Open the USB camera, take one still, then release it.
+
+    Same cadence as auto-water. Leaving V4L2 open would keep the sensor
+    streaming and burn CPU on the Pi for nothing.
+    """
+    global JPEG, CAP
+    cap, idx = find_camera()
+    CAP = cap
+    with LOCK:
+        STATE["camera"] = idx
+    if cap is None:
+        print("snapshot: no camera on /dev/video0-2", flush=True)
+        return False
+    frame = None
+    ok = False
+    # First frames after open are often dark / auto-exposure settling.
+    for _ in range(8):
+        ok, frame = cap.read()
+        if not ok:
+            break
+    try:
+        cap.release()
+    except Exception:
+        pass
+    CAP = None
+    if not ok or frame is None:
+        print("snapshot: read failed", flush=True)
+        return False
+    g, y, d = analyze(frame)
+    _, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+    JPEG = jpg.tobytes()
+    with LOCK:
+        STATE["green"] = g
+        STATE["yellow"] = y
+        STATE["dark"] = d
+        STATE["snapshot_at"] = time.time()
+    refresh_status()
+    print(f"snapshot {len(JPEG)} bytes green {g:.2f} yellow {y:.2f}", flush=True)
+    return True
+
+
 def auto_loop() -> None:
+    grab_snapshot()
+    with LOCK:
+        STATE["last_auto"] = time.time()
     while True:
         time.sleep(1)
         maybe_reload_cfg()
@@ -730,41 +776,12 @@ def auto_loop() -> None:
             continue
         with LOCK:
             STATE["last_auto"] = now
+        grab_snapshot()
         if not sensors_ok:
             continue
         profile = current_profile()
         if moisture < profile["low"]:
             threading.Thread(target=water_pulse, daemon=True).start()
-
-
-def capture_loop(cap) -> None:
-    global JPEG
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            time.sleep(0.05)
-            continue
-        g, y, d = analyze(frame)
-        with LOCK:
-            STATE["green"] = g
-            STATE["yellow"] = y
-            STATE["dark"] = d
-        refresh_status()
-        _, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-        JPEG = jpg.tobytes()
-        time.sleep(0.04)
-
-
-def gen_frames():
-    while True:
-        frame = JPEG
-        if frame is None:
-            time.sleep(0.05)
-            continue
-        yield (
-            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-        )
-        time.sleep(0.08)
 
 
 app = Flask(__name__)
@@ -792,10 +809,14 @@ def kiosk_page():
 
 
 @app.get("/video")
-def video():
-    if CAP is None and JPEG is None:
+@app.get("/snapshot")
+def snapshot():
+    frame = JPEG
+    if frame is None:
         return "No camera", 503
-    return Response(gen_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+    resp = Response(frame, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "no-store, no-cache, max-age=0"
+    return resp
 
 
 @app.get("/status")
@@ -829,6 +850,7 @@ def status():
             "light_raw": s["light_raw"],
             "last_line": s["last_line"],
             "sensors_ok": s["sensors_ok"],
+            "snapshot_at": float(s.get("snapshot_at") or 0),
             "moisture_dry": CFG["moistureDry"],
             "moisture_wet": CFG["moistureWet"],
             "lamp_delta": int(s.get("lamp_delta") or 0),
@@ -1025,22 +1047,12 @@ def poweroff():
 
 @app.after_request
 def no_store(resp):
-    if request.path in ("/status", "/", "/kiosk", "/light", "/api/light/today"):
+    if request.path in ("/status", "/", "/kiosk", "/light", "/api/light/today", "/snapshot", "/video"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 def main() -> None:
-    global CAP
-    cap, cam_idx = find_camera()
-    CAP = cap
-    with LOCK:
-        STATE["camera"] = cam_idx
-    if cap is None:
-        print("No camera found on /dev/video0-2", flush=True)
-    else:
-        print(f"Camera index {cam_idx}", flush=True)
-        threading.Thread(target=capture_loop, args=(cap,), daemon=True).start()
     threading.Thread(target=serial_loop, daemon=True).start()
     threading.Thread(target=auto_loop, daemon=True).start()
     print(

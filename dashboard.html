@@ -54,7 +54,8 @@
     font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
     padding: 4px 8px; border-radius: 6px;
   }
-  .dot { width: 6px; height: 6px; border-radius: 99px; background: var(--alert); }
+  .dot { width: 6px; height: 6px; border-radius: 99px; background: var(--muted); }
+  .dot.live { background: var(--alert); }
   .flag {
     position: absolute; top: clamp(8px, 1.4vh, 14px); right: clamp(8px, 1.4vh, 14px);
     font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px;
@@ -163,9 +164,9 @@
   </header>
   <div class="body">
     <div class="cam">
-      <img src="/video" alt="Station camera"/>
+      <img id="cam" src="/snapshot" alt="Station camera"/>
       <div class="scrim"></div>
-      <div class="badge"><span class="dot"></span> Live</div>
+      <div class="badge"><span class="dot"></span> <span id="snapLabel">Snapshot</span></div>
       <div class="flag pulse" id="pulse" hidden>Pulse</div>
       <div class="flag lamp" id="lampFlag" hidden>Lamp</div>
       <p class="plant" id="plant">—</p>
@@ -333,6 +334,24 @@ async function refresh() {
       cpuEl.textContent = s.cpu_temp == null
         ? "CPU -- °C"
         : ("CPU " + Number(s.cpu_temp).toFixed(1) + " °C");
+    }
+    const cam = document.getElementById("cam");
+    const snapLabel = document.getElementById("snapLabel");
+    if (s.snapshot_at) {
+      const at = String(s.snapshot_at);
+      if (cam && cam.dataset.at !== at) {
+        cam.dataset.at = at;
+        cam.src = "/snapshot?t=" + encodeURIComponent(at);
+      }
+      if (snapLabel) {
+        const d = new Date(Number(s.snapshot_at) * 1000);
+        snapLabel.textContent = "Snapshot " + d.toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        });
+      }
+    } else if (snapLabel) {
+      snapLabel.textContent = s.camera == null ? "No camera" : "Snapshot";
     }
   } catch (err) {
     document.getElementById("raw").textContent = "status error";
