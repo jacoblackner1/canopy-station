@@ -104,10 +104,15 @@
   .next { text-align: center; font-family: ui-monospace, monospace; font-size: clamp(11px, 1.8vh, 14px); color: var(--muted); margin: 0; }
   .raw { text-align: center; font-family: ui-monospace, monospace; font-size: 11px; color: var(--subtle); margin: 0; word-break: break-word; }
   .cal { display: flex; gap: 8px; }
-  .cal button {
-    flex: 1; min-height: 44px; font-size: 13px; border-radius: 999px;
+  .cal button, .plants button {
+    flex: 1; min-height: 44px; font-size: 12px; border-radius: 999px;
     background: transparent; color: var(--muted);
     box-shadow: 0 0 0 1px rgba(232,238,230,.12);
+  }
+  .plants { display: flex; gap: 8px; }
+  .plants button.on {
+    background: var(--primary); color: var(--primary-fg);
+    box-shadow: none;
   }
   .power {
     min-height: 40px; font-size: 13px; color: var(--muted);
@@ -174,6 +179,11 @@
         </div>
         <p class="next" id="next">Auto --:--</p>
         <p class="raw" id="raw">sensors —</p>
+        <div class="plants controls" id="plants">
+          <button type="button" data-plant="lush">Lush</button>
+          <button type="button" data-plant="standard">Standard</button>
+          <button type="button" data-plant="succulent">Succulent</button>
+        </div>
         <div class="cal controls">
           <button type="button" id="setAir">Set air</button>
           <button type="button" id="setWater">Set water</button>
@@ -221,6 +231,9 @@ async function refresh() {
     document.getElementById("status").className = "status " + (s.status_tone || "muted");
     document.getElementById("profile").textContent = s.profile || "—";
     document.getElementById("plant").textContent = s.profile || "—";
+    document.querySelectorAll("#plants [data-plant]").forEach((b) => {
+      b.classList.toggle("on", b.getAttribute("data-plant") === (s.plant_id || ""));
+    });
     meter(document.getElementById("m-moist"), "Moisture", s.moisture, s.low, s.high, ready);
     meter(document.getElementById("m-light"), "Light", s.light, 40, null, ready);
     meter(document.getElementById("m-green"), "Green", num(s.green) * 100, 25, null, true);
@@ -280,6 +293,9 @@ if (!KIOSK) {
   document.getElementById("lamp").onclick = () => fetch("/light", { method: "POST" });
   document.getElementById("setAir").onclick = () => calibrate("air");
   document.getElementById("setWater").onclick = () => calibrate("water");
+  document.querySelectorAll("#plants [data-plant]").forEach((b) => {
+    b.onclick = () => fetch("/plant/" + b.getAttribute("data-plant"), { method: "POST" }).then(refresh);
+  });
   const powerBtn = document.getElementById("power");
   let powerArmed = 0;
   powerBtn.onclick = async () => {

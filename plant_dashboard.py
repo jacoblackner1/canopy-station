@@ -40,6 +40,7 @@ DEFAULTS = {
     "lampMoistDelta": 0,
     "flaskHost": "0.0.0.0",
     "flaskPort": 5000,
+    "plantKind": "standard",
 }
 
 PROFILES = (
@@ -93,6 +94,7 @@ STATE = {
     "pump": False,
     "lamp": False,
     "profile": PROFILES[1]["label"],
+    "plant_id": PROFILES[1]["id"],
     "status": "Waiting for sensors",
     "status_tone": "muted",
     "camera": None,
@@ -193,9 +195,10 @@ def maybe_reload_cfg() -> None:
     CFG = load_cfg()
     print(
         f"reloaded station.json dry {CFG['moistureDry']} wet {CFG['moistureWet']} "
-        f"dark {CFG['lightDark']} day {CFG['lightDay']}",
+        f"dark {CFG['lightDark']} day {CFG['lightDay']} plant {CFG.get('plantKind')}",
         flush=True,
     )
+    refresh_status()
 
 
 def scale_inverted(raw, dry, wet) -> float:
@@ -205,12 +208,21 @@ def scale_inverted(raw, dry, wet) -> float:
     return max(0.0, min(100.0, (dry - raw) / span * 100.0))
 
 
-def classify(green: float) -> dict:
-    if green > 0.45:
-        return PROFILES[0]
-    if green > 0.25:
-        return PROFILES[1]
-    return PROFILES[2]
+def profile_by_id(kind) -> dict:
+    key = str(kind or "").strip().lower()
+    for p in PROFILES:
+        if p["id"] == key:
+            return p
+    return PROFILES[1]
+
+
+def current_profile() -> dict:
+    return profile_by_id(CFG.get("plantKind"))
+
+
+_p0 = current_profile()
+STATE["profile"] = _p0["label"]
+STATE["plant_id"] = _p0["id"]
 
 
 def health(green: float, moisture: float, profile: dict, sensors_ok: bool) -> tuple[str, str]:
@@ -230,9 +242,10 @@ def refresh_status() -> None:
         green = STATE["green"]
         moisture = STATE["moisture"]
         sensors_ok = STATE["sensors_ok"]
-        profile = classify(green)
+        profile = current_profile()
         short, tone = health(green, moisture, profile, sensors_ok)
         STATE["profile"] = profile["label"]
+        STATE["plant_id"] = profile["id"]
         STATE["status"] = short
         STATE["status_tone"] = tone
 
@@ -491,7 +504,7 @@ def auto_loop() -> None:
             STATE["last_auto"] = now
         if not sensors_ok:
             continue
-        profile = classify(green)
+        profile = current_profile()
         if moisture < profile["low"]:
             threading.Thread(target=water_pulse, daemon=True).start()
         if light < CFG["lightOnBelow"] and not lamp:
@@ -561,7 +574,7 @@ def video():
 def status():
     with LOCK:
         s = dict(STATE)
-    profile = classify(s["green"])
+    profile = current_profile()
     last = s["last_auto"] or time.time()
     auto_in = max(0.0, CFG["autoSeconds"] - (time.time() - last))
     return jsonify(
@@ -574,6 +587,7 @@ def status():
             "pump": bool(s["pump"]),
             "lamp": bool(s["lamp"]),
             "profile": s["profile"],
+            "plant_id": s.get("plant_id") or profile["id"],
             "status": s["status"],
             "status_tone": s["status_tone"],
             "low": profile["low"],
@@ -644,6 +658,27 @@ def calibrate(kind: str):
         refresh_status()
     print(f"calibrated {key} = {raw}", flush=True)
     return jsonify({"ok": True, "key": key, "raw": int(raw), "dry": CFG["moistureDry"], "wet": CFG["moistureWet"]})
+
+
+@app.post("/plant/<kind>")
+def set_plant(kind: str):
+    profile = profile_by_id(kind)
+    if str(kind or "").strip().lower() != profile["id"]:
+        return jsonify({"ok": False, "error": "unknown plant"}), 400
+    CFG["plantKind"] = profile["id"]
+    save_cfg(CFG)
+    refresh_status()
+    print(f"plant {profile['id']} moisture {profile['low']}-{profile['high']}%", flush=True)
+    return jsonify(
+        {
+            "ok": True,
+            "plant_id": profile["id"],
+            "profile": profile["label"],
+            "low": profile["low"],
+            "high": profile["high"],
+        }
+    )
+
 
 
 def _poweroff_cmds() -> list[list[str]]:

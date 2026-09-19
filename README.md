@@ -113,6 +113,18 @@ journalctl -u canopy-station -f
 
 Watch for `Arduino on /dev/ttyUSB0` and `sensor raw … -> moisture …% light …%`. Refresh the kiosk (or rerun `./scripts/start_kiosk.sh`).
 
+## Plant type (moisture targets)
+
+On the phone/computer page pick **Lush**, **Standard**, or **Succulent**. HDMI shows the name only. Auto-water uses that plant’s band:
+
+| Plant | Moisture |
+|-------|----------|
+| Lush houseplant | 45–75% |
+| Standard houseplant | 40–70% |
+| Succulent / low-water | 20–50% |
+
+The choice is saved in `station.json` as `plantKind`.
+
 ## Calibrate moisture (this is what makes the % accurate)
 
 The Nano sends **analog 0–1023**. Capacitive probes read **high in air, low in water**. The percentage is:
