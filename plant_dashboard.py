@@ -11,6 +11,7 @@ Capacitive probes read HIGH when dry and LOW when wet.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -127,6 +128,10 @@ LIGHT = {
     "samples": [],
     "lamp_since": None,
     "lamp_on_at": 0.0,
+    "last_dt": 0.0,
+    "last_intensity": 0.0,
+    "last_raw": None,
+    "source": "simulator",
 }
 
 _CPU_TEMP_PATH: Path | None = None
@@ -417,7 +422,76 @@ def light_today_payload() -> dict:
         "lampSince": int(LIGHT["lamp_since"] * 1000) if LIGHT["lamp_since"] else None,
         "override": CFG.get("lightOverride") or "auto",
         "unit": "sun-h",
+        "debug": {
+            "raw": LIGHT.get("last_raw"),
+            "intensity": LIGHT.get("last_intensity"),
+            "dtH": LIGHT.get("last_dt"),
+            "samples": len(LIGHT["samples"]),
+            "source": LIGHT.get("source") or "simulator",
+            "lastSample": LIGHT["samples"][-1]["t"] if LIGHT["samples"] else None,
+        },
     }
+
+
+def _u01(seed: str) -> float:
+    n = int(hashlib.sha256(seed.encode("utf-8")).hexdigest()[:8], 16)
+    return n / 0xFFFFFFFF
+
+
+def simulated_intensity(now: datetime, lamp: bool = False) -> float:
+    """Sky + cloud model. Must not call expected_light_at / solar_progress."""
+    mins = now.hour * 60 + now.minute + now.second / 60.0
+    day = now.strftime("%Y-%m-%d")
+    if mins < 380 or mins > 1240:
+        sky = 0.04
+    elif mins < 500:
+        sky = 0.04 + 0.52 * ((mins - 380) / 120.0)
+    elif mins > 1110:
+        sky = 0.5 * max(0.0, (1240 - mins) / 130.0)
+    else:
+        x = (mins - 500) / 610.0
+        sky = 0.4 + 0.24 * math.sin(x * math.pi)
+    cloud = 0.36 + 0.64 * _u01(f"{day}-{int(mins // 17)}")
+    if _u01(f"{day}-c-{int(mins // 31)}") < 0.24:
+        cloud *= 0.32
+    intensity = max(0.0, min(1.0, sky * cloud))
+    if lamp:
+        intensity = min(1.0, intensity + 0.35)
+    return intensity
+
+
+def append_actual_sample(
+    *,
+    now: float,
+    intensity: float,
+    dt_h: float,
+    lamp: bool,
+    raw: int | None,
+    source: str,
+) -> None:
+    """Actual[t] += measured_intensity × Δt. Never reads expected_light_at()."""
+    LIGHT["acc"] += max(0.0, intensity) * max(0.0, dt_h)
+    LIGHT["last_t"] = now
+    LIGHT["last_dt"] = dt_h
+    LIGHT["last_intensity"] = intensity
+    LIGHT["last_raw"] = raw
+    LIGHT["source"] = source
+    samples = LIGHT["samples"]
+    point = {
+        "t": int(now * 1000),
+        "v": round(LIGHT["acc"], 4),
+        "lamp": lamp,
+        "intensity": round(intensity, 4),
+        "dtH": round(dt_h, 6),
+        "raw": raw,
+    }
+    if not samples or now * 1000 - samples[-1]["t"] >= 30_000:
+        samples.append(point)
+        LIGHT["samples"] = samples[-2880:]
+        if len(LIGHT["samples"]) % 10 == 0:
+            save_light_day()
+    else:
+        samples[-1] = point
 
 
 def light_tick() -> None:
@@ -432,22 +506,27 @@ def light_tick() -> None:
         LIGHT["lamp_since"] = now if STATE["lamp"] else None
         LIGHT["lamp_on_at"] = now if STATE["lamp"] else 0.0
     last = LIGHT["last_t"] or now
-    dt_h = max(0.0, min(0.05, (now - last) / 3600.0))
-    LIGHT["last_t"] = now
+    gap = now - last
+    dt_h = 0.0 if gap < 0 or gap > 900 else gap / 3600.0
     with LOCK:
-        intensity = float(STATE["light"]) / 100.0
+        raw = STATE["light_raw"]
         lamp = bool(STATE["lamp"])
         sensors_ok = bool(STATE["sensors_ok"])
-    LIGHT["acc"] += intensity * dt_h
-    samples = LIGHT["samples"]
-    point = {"t": int(now * 1000), "v": round(LIGHT["acc"], 4), "lamp": lamp}
-    if not samples or now * 1000 - samples[-1]["t"] >= 60_000:
-        samples.append(point)
-        LIGHT["samples"] = samples[-720:]
-        if len(LIGHT["samples"]) % 8 == 0:
-            save_light_day()
+        calibrated = float(STATE["light"]) / 100.0
+    if sensors_ok and raw is not None:
+        intensity = calibrated
+        source = "hardware"
     else:
-        samples[-1] = point
+        intensity = simulated_intensity(now_dt, lamp)
+        source = "simulator"
+    append_actual_sample(
+        now=now,
+        intensity=intensity,
+        dt_h=dt_h,
+        lamp=lamp,
+        raw=int(raw) if raw is not None else None,
+        source=source,
+    )
     override = str(CFG.get("lightOverride") or "auto").lower()
     if override == "auto" and not sensors_ok:
         return

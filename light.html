@@ -33,7 +33,7 @@
     padding: 24px 24px 28px;
     box-shadow: 0 0 0 1px rgba(232,238,230,.08);
   }
-  .k { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .k { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; display: flex; align-items: baseline; gap: 10px; }
   .num { font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.8rem, 9vw, 3.75rem); margin: 6px 0 0; letter-spacing: -0.03em; line-height: 1; }
   .num span { font-family: "Segoe UI", system-ui, sans-serif; font-size: 1rem; color: var(--muted); margin-left: 8px; font-style: normal; }
   .line { margin: 12px 0 0; font-size: 15px; }
@@ -70,6 +70,21 @@
     box-shadow: 0 0 0 1px rgba(232,238,230,.12);
   }
   .chart-wrap { position: relative; }
+  details.dbg {
+    margin-top: 20px; font-size: 12px; color: var(--muted);
+  }
+  details.dbg summary { cursor: pointer; color: var(--subtle); }
+  details.dbg dl {
+    margin: 8px 0 0; display: grid;
+    grid-template-columns: 1fr 1fr; gap: 4px 16px;
+    font-family: ui-monospace, monospace;
+  }
+  details.dbg dt { color: var(--subtle); }
+  details.dbg dd { margin: 0; color: var(--fg); }
+  .sim {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    letter-spacing: .06em; color: var(--warn); margin: 0 0 0 auto;
+  }
 </style>
 </head>
 <body>
@@ -79,7 +94,7 @@
 </header>
 <main>
   <section class="card">
-    <p class="k">Today's light</p>
+    <p class="k">Today's light <span class="sim" id="simLab" hidden>SIMULATED</span></p>
     <p class="num" id="acc">—<span>sun-h</span></p>
     <p class="line" id="status">—</p>
     <div class="chart-wrap">
@@ -92,6 +107,10 @@
       <span><i class="sw gap" id="gapSw"></i><span id="gapLab">Behind</span></span>
     </div>
     <p class="foot" id="foot">—</p>
+    <details class="dbg">
+      <summary>Sampler</summary>
+      <dl id="dbg"></dl>
+    </details>
     <div class="modes">
       <button type="button" data-mode="auto">Auto</button>
       <button type="button" data-mode="on">Force on</button>
@@ -119,6 +138,10 @@ function axisClock(ms, isEnd) {
   const h = parts.find((p) => p.type === "hour")?.value ?? "00";
   const m = parts.find((p) => p.type === "minute")?.value ?? "00";
   return String(Number(h) % 24) + ":" + m;
+}
+function polyPath(pts) {
+  if (!pts.length) return "";
+  return pts.map((s, i) => (i ? "L " : "M ") + s.split(",").map((n) => Number(n).toFixed(1)).join(" ")).join(" ");
 }
 function smoothPath(pts) {
   if (!pts.length) return "";
@@ -177,7 +200,7 @@ function draw(data) {
   if (under) parts.push(`<polygon points="${under}" fill="#c4a574" opacity="0.12"/>`);
   if (gap) parts.push(`<polygon points="${gap}" fill="${behind ? "#c47a6a" : "#8fba8a"}" opacity="0.22"/>`);
   if (expPts.length) parts.push(`<path d="${smoothPath(expPts)}" fill="none" stroke="#8a9386" stroke-width="1.5" stroke-dasharray="5 5" stroke-linejoin="round"/>`);
-  if (actPts.length) parts.push(`<path d="${smoothPath(actPts)}" fill="none" stroke="#c4a574" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>`);
+  if (actPts.length) parts.push(`<path d="${polyPath(actPts)}" fill="none" stroke="#c4a574" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>`);
   parts.push(`<line x1="${x(nowT)}" x2="${x(nowT)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="#e8eee6" stroke-width="1" opacity="0.4"/>`);
   parts.push(`<text x="${x(nowT) + (nowOnRight ? -8 : 6)}" y="${pad.t - 6}" text-anchor="${nowOnRight ? "end" : "start"}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">now</text>`);
   if (last) parts.push(`<circle cx="${x(last.t)}" cy="${y(last.v)}" r="4.5" fill="#c4a574"/>`);
@@ -208,6 +231,24 @@ function apply(data) {
     " <span>·</span> Lamp <b>" + lampTxt + "</b>";
   document.getElementById("gapLab").textContent = behind ? "Behind" : "Ahead";
   document.getElementById("gapSw").style.background = behind ? "var(--alert)" : "var(--ok)";
+  const dbg = data.debug || {};
+  const src = dbg.source || "simulator";
+  const simLab = document.getElementById("simLab");
+  if (simLab) simLab.hidden = src !== "simulator";
+  const dbgEl = document.getElementById("dbg");
+  if (dbgEl) {
+    const lastMs = dbg.lastSample;
+    const lastTxt = lastMs ? axisClock(lastMs) : "—";
+    const dtS = dbg.dtH != null ? (Number(dbg.dtH) * 3600).toFixed(2) + "s" : "—";
+    const inten = dbg.intensity != null ? (Number(dbg.intensity) * 100).toFixed(1) + "%" : "—";
+    dbgEl.innerHTML =
+      "<div><dt>source</dt><dd>" + src + "</dd></div>" +
+      "<div><dt>raw ADC</dt><dd>" + (dbg.raw == null ? "—" : dbg.raw) + "</dd></div>" +
+      "<div><dt>intensity</dt><dd>" + inten + "</dd></div>" +
+      "<div><dt>last Δt</dt><dd>" + dtS + "</dd></div>" +
+      "<div><dt>samples</dt><dd>" + (dbg.samples == null ? "—" : dbg.samples) + "</dd></div>" +
+      "<div><dt>last sample</dt><dd>" + lastTxt + "</dd></div>";
+  }
   document.querySelectorAll(".modes button").forEach((b) => {
     b.classList.toggle("on", b.getAttribute("data-mode") === data.override);
   });
