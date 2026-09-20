@@ -126,6 +126,7 @@ LIGHT = {
     "day": "",
     "acc": 0.0,
     "last_t": 0.0,
+    "last_slot": 0.0,
     "samples": [],
     "lamp_since": None,
     "lamp_on_at": 0.0,
@@ -305,6 +306,17 @@ def day_bounds(now: datetime | None = None) -> tuple[datetime, datetime]:
     return midnight, midnight + timedelta(days=1)
 
 
+def light_slot(now: datetime | None = None) -> datetime:
+    """Floor to Pacific xx:00 / xx:05 / xx:10 … — not UTC epoch/300."""
+    now = now or station_now()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=STATION_TZ)
+    else:
+        now = now.astimezone(STATION_TZ)
+    minute = now.minute - (now.minute % 5)
+    return now.replace(minute=minute, second=0, microsecond=0)
+
+
 def light_window_minutes() -> tuple[int, int]:
     sh, sm = _hhmm(CFG.get("lightWindowStart"), "07:00")
     eh, em = _hhmm(CFG.get("lightWindowEnd"), "19:00")
@@ -370,6 +382,14 @@ def in_light_window(now: datetime | None = None) -> bool:
     return start_m <= mins < end_m
 
 
+LIGHT_SAMPLE_SEC = 300
+LIGHT_KEEP = 2880
+
+
+def prune_light_samples(samples: list, midnight_ms: int) -> list:
+    return [p for p in samples if int(p.get("t") or 0) >= midnight_ms][-LIGHT_KEEP:]
+
+
 def load_light_day() -> None:
     if not LIGHT_PATH.exists():
         return
@@ -380,11 +400,21 @@ def load_light_day() -> None:
     today = station_now().strftime("%Y-%m-%d")
     if data.get("day") != today:
         return
+    midnight, _ = day_bounds()
+    midnight_ms = int(midnight.timestamp() * 1000)
     LIGHT["day"] = today
     LIGHT["acc"] = float(data.get("acc") or 0)
-    LIGHT["samples"] = list(data.get("samples") or [])[-720:]
+    LIGHT["samples"] = prune_light_samples(list(data.get("samples") or []), midnight_ms)
     LIGHT["lamp_since"] = data.get("lamp_since")
     LIGHT["last_t"] = float(data.get("last_t") or 0)
+    LIGHT["last_slot"] = float(data.get("last_slot") or 0)
+    if LIGHT["samples"]:
+        last = LIGHT["samples"][-1]
+        if not LIGHT["last_t"]:
+            LIGHT["last_t"] = float(last["t"]) / 1000.0
+        if not LIGHT["last_slot"]:
+            LIGHT["last_slot"] = float(last["t"]) / 1000.0
+        LIGHT["acc"] = float(last.get("v") or LIGHT["acc"])
 
 
 def save_light_day() -> None:
@@ -394,9 +424,10 @@ def save_light_day() -> None:
                 {
                     "day": LIGHT["day"],
                     "acc": LIGHT["acc"],
-                    "samples": LIGHT["samples"][-720:],
+                    "samples": LIGHT["samples"][-LIGHT_KEEP:],
                     "lamp_since": LIGHT["lamp_since"],
                     "last_t": LIGHT["last_t"],
+                    "last_slot": LIGHT["last_slot"],
                 }
             )
             + "\n"
@@ -635,6 +666,7 @@ def light_today_payload() -> dict:
             "samples": len(LIGHT["samples"]),
             "source": LIGHT.get("source") or "simulator",
             "lastSample": LIGHT["samples"][-1]["t"] if LIGHT["samples"] else None,
+            "lastSlot": int(LIGHT["last_slot"] * 1000) if LIGHT.get("last_slot") else None,
             "dark": int(CFG["lightDark"]),
             "day": int(CFG["lightDay"]),
         },
@@ -670,52 +702,76 @@ def simulated_intensity(now: datetime, lamp: bool = False) -> float:
 
 def append_actual_sample(
     *,
-    now: float,
+    slot: datetime,
+    now_wall: float,
     intensity: float,
     dt_h: float,
     lamp: bool,
     raw: int | None,
     source: str,
 ) -> None:
-    """Actual[t] += measured_intensity × Δt. Never reads expected_light_at()."""
-    LIGHT["acc"] += max(0.0, intensity) * max(0.0, dt_h)
-    LIGHT["last_t"] = now
+    """One Pacific 5-minute grid point. Actual += intensity × real Δt."""
+    dt_sec = max(0.0, dt_h) * 3600.0
+    added = max(0.0, intensity) * max(0.0, dt_h)
+    LIGHT["acc"] += added
+    LIGHT["last_t"] = now_wall
+    LIGHT["last_slot"] = slot.timestamp()
     LIGHT["last_dt"] = dt_h
     LIGHT["last_intensity"] = intensity
     LIGHT["last_raw"] = raw
     LIGHT["source"] = source
-    samples = LIGHT["samples"]
     point = {
-        "t": int(now * 1000),
+        "t": int(slot.timestamp() * 1000),
         "v": round(LIGHT["acc"], 4),
         "lamp": lamp,
         "intensity": round(intensity, 4),
         "dtH": round(dt_h, 6),
+        "dtSeconds": round(dt_sec, 3),
+        "added": round(added, 6),
+        "expected": round(expected_light_at(slot), 4),
         "raw": raw,
     }
-    if not samples or now * 1000 - samples[-1]["t"] >= 30_000:
-        samples.append(point)
-        LIGHT["samples"] = samples[-2880:]
-        if len(LIGHT["samples"]) % 10 == 0:
-            save_light_day()
-    else:
+    samples = LIGHT["samples"]
+    if samples and int(samples[-1]["t"]) == point["t"]:
         samples[-1] = point
+    else:
+        samples.append(point)
+        LIGHT["samples"] = samples[-LIGHT_KEEP:]
+    save_light_day()
+    print(
+        f"light sample {slot.strftime('%Y-%m-%d %H:%M:%S')} "
+        f"raw={raw} intensity={intensity:.3f} dt={dt_sec:.1f}s "
+        f"added={added:.4f} acc={LIGHT['acc']:.4f} lamp={int(lamp)}",
+        flush=True,
+    )
 
 
-def light_tick() -> None:
+def maybe_light_sample() -> None:
+    """Append only when the Pacific 5-minute slot advances. 24h, including nights."""
     now_dt = station_now()
-    now = time.time()
+    now_wall = time.time()
     today = now_dt.strftime("%Y-%m-%d")
+    midnight, _ = day_bounds(now_dt)
+    midnight_ms = int(midnight.timestamp() * 1000)
     if LIGHT["day"] != today:
         LIGHT["day"] = today
         LIGHT["acc"] = 0.0
-        LIGHT["samples"] = []
-        LIGHT["last_t"] = now
-        LIGHT["lamp_since"] = now if STATE["lamp"] else None
-        LIGHT["lamp_on_at"] = now if STATE["lamp"] else 0.0
-    last = LIGHT["last_t"] or now
-    gap = now - last
-    dt_h = 0.0 if gap < 0 or gap > 900 else gap / 3600.0
+        LIGHT["samples"] = prune_light_samples(LIGHT["samples"], midnight_ms)
+        LIGHT["last_slot"] = 0.0
+        LIGHT["last_t"] = now_wall
+        LIGHT["lamp_since"] = now_wall if STATE["lamp"] else None
+        LIGHT["lamp_on_at"] = now_wall if STATE["lamp"] else 0.0
+        if LIGHT["samples"]:
+            LIGHT["acc"] = float(LIGHT["samples"][-1].get("v") or 0)
+            LIGHT["last_slot"] = float(LIGHT["samples"][-1]["t"]) / 1000.0
+    slot = light_slot(now_dt)
+    slot_epoch = slot.timestamp()
+    if slot_epoch <= float(LIGHT.get("last_slot") or 0):
+        return
+    last = LIGHT["last_t"] or now_wall
+    gap = now_wall - last
+    # Late cycle: 480s is 480s, not 300. Huge gaps (reboot) add nothing.
+    dt_h = 0.0 if gap < 0 or gap > 7200 else gap / 3600.0
     with LOCK:
         raw = STATE["light_raw"]
         lamp = bool(STATE["lamp"])
@@ -728,13 +784,23 @@ def light_tick() -> None:
         intensity = simulated_intensity(now_dt, lamp)
         source = "simulator"
     append_actual_sample(
-        now=now,
+        slot=slot,
+        now_wall=now_wall,
         intensity=intensity,
         dt_h=dt_h,
         lamp=lamp,
         raw=int(raw) if raw is not None else None,
         source=source,
     )
+
+
+def light_control() -> None:
+    """Hysteresis / override every 1s. Does not wait for the 5-minute sample."""
+    now_dt = station_now()
+    now = time.time()
+    with LOCK:
+        lamp = bool(STATE["lamp"])
+        sensors_ok = bool(STATE["sensors_ok"])
     override = str(CFG.get("lightOverride") or "auto").lower()
     if override == "auto" and not sensors_ok:
         return
@@ -757,12 +823,18 @@ def light_tick() -> None:
             want = False
     if want != lamp:
         set_lamp(want)
-        LIGHT["lamp_since"] = now if want else None
-        LIGHT["lamp_on_at"] = now if want else 0.0
-        save_light_day()
-    elif want and not LIGHT["lamp_since"]:
-        LIGHT["lamp_since"] = now
-        LIGHT["lamp_on_at"] = now
+        if want:
+            LIGHT["lamp_on_at"] = now
+            if not LIGHT["lamp_since"]:
+                LIGHT["lamp_since"] = now
+        else:
+            LIGHT["lamp_on_at"] = 0.0
+            LIGHT["lamp_since"] = None
+
+
+def light_tick() -> None:
+    maybe_light_sample()
+    light_control()
 
 
 load_light_day()
@@ -1092,6 +1164,7 @@ def auto_loop() -> None:
         time.sleep(1)
         maybe_reload_cfg()
         try:
+            # 1s worker: lamp control every tick; sample only on Pacific 5-min slots.
             light_tick()
         except Exception as exc:
             print(f"light tick: {exc}", flush=True)

@@ -145,7 +145,7 @@ The Moisture bar on the phone/computer page still shows instantaneous %. Tap it 
 
 ## Today's light
 
-The Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a **24-hour** chart of accumulated sun-hours (Pacific midnight to midnight). **Actual** is the integral of the photoresistor (or a labeled simulator if the Arduino is missing) — not a copy of the expected curve. Expected is a solar-shaped ramp 07:00–19:00. Auto lamp still follows that daytime window. **Set dark / Set bright** on that page capture the current ADC as 0% and 100%. HDMI keeps the bar, no chart.
+The Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a **24-hour** chart of accumulated sun-hours (Pacific midnight to midnight). **Actual** is sampled every **5 minutes** on the Pacific clock (`xx:00`, `xx:05`, `xx:10` …) from the photoresistor (or a labeled simulator if the Arduino is missing) and drawn as a smooth line through those points — not a copy of the expected curve. A late cycle uses the real elapsed seconds, then the grid resumes. Expected is a solar-shaped ramp 07:00–19:00. Auto lamp still follows that daytime window every second (sampling period ≠ lamp control). **Set dark / Set bright** on that page capture the current ADC as 0% and 100%. HDMI keeps the bar, no chart.
 
 ## Calibrate moisture (this is what makes the % accurate)
 
