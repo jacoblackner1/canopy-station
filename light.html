@@ -55,13 +55,23 @@
   .foot .behind { color: var(--alert); }
   .foot .ahead { color: var(--ok); }
   .modes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 24px; }
-  .modes button {
+  .cal {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;
+  }
+  .cal button, .modes button {
     min-height: 44px; border: 0; border-radius: 999px; cursor: pointer;
     font: 500 14px "Segoe UI", system-ui, sans-serif;
     background: transparent; color: var(--muted);
     box-shadow: 0 0 0 1px rgba(232,238,230,.14);
   }
   .modes button.on { background: var(--primary); color: var(--primary-fg); box-shadow: none; }
+  .hint { margin: 24px 0 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+  .cal-read {
+    margin: 8px 0 0;
+    font-family: ui-monospace, monospace;
+    font-size: 12px; color: var(--muted);
+  }
+  .cal-read b { font-weight: 500; color: var(--fg); }
   .tip {
     position: absolute; pointer-events: none;
     background: var(--surface-2); color: var(--fg);
@@ -107,6 +117,12 @@
       <span><i class="sw gap" id="gapSw"></i><span id="gapLab">Behind</span></span>
     </div>
     <p class="foot" id="foot">—</p>
+    <p class="hint">Cover the sensor, then Set dark. Flashlight or sun, then Set bright. That maps raw ADC to 0–100% for the accumulator.</p>
+    <div class="cal">
+      <button type="button" data-cal="dark">Set dark</button>
+      <button type="button" data-cal="day">Set bright</button>
+    </div>
+    <p class="cal-read" id="calRead">raw —</p>
     <details class="dbg">
       <summary>Sampler</summary>
       <dl id="dbg"></dl>
@@ -247,7 +263,19 @@ function apply(data) {
       "<div><dt>intensity</dt><dd>" + inten + "</dd></div>" +
       "<div><dt>last Δt</dt><dd>" + dtS + "</dd></div>" +
       "<div><dt>samples</dt><dd>" + (dbg.samples == null ? "—" : dbg.samples) + "</dd></div>" +
-      "<div><dt>last sample</dt><dd>" + lastTxt + "</dd></div>";
+      "<div><dt>last sample</dt><dd>" + lastTxt + "</dd></div>" +
+      "<div><dt>dark / bright</dt><dd>" +
+      (dbg.dark == null ? "—" : dbg.dark) + " / " +
+      (dbg.day == null ? "—" : dbg.day) + "</dd></div>";
+    const intenPct = dbg.intensity != null ? (Number(dbg.intensity) * 100).toFixed(1) : "—";
+    const calRead = document.getElementById("calRead");
+    if (calRead) {
+      calRead.innerHTML =
+        "raw <b>" + (dbg.raw == null ? "—" : dbg.raw) + "</b>" +
+        " · " + intenPct + (dbg.intensity != null ? "%" : "") +
+        " · dark <b>" + (dbg.dark == null ? "—" : dbg.dark) + "</b>" +
+        " · bright <b>" + (dbg.day == null ? "—" : dbg.day) + "</b>";
+    }
   }
   document.querySelectorAll(".modes button").forEach((b) => {
     b.classList.toggle("on", b.getAttribute("data-mode") === data.override);
@@ -267,6 +295,30 @@ document.querySelectorAll(".modes button").forEach((b) => {
       body: JSON.stringify({ mode: b.getAttribute("data-mode") }),
     });
     apply(await res.json());
+  };
+});
+document.querySelectorAll(".cal button").forEach((b) => {
+  b.onclick = async () => {
+    const kind = b.getAttribute("data-cal");
+    const calRead = document.getElementById("calRead");
+    try {
+      const res = await fetch("/calibrate/" + kind, { method: "POST" });
+      const s = await res.json();
+      if (!s.ok) {
+        if (calRead) calRead.textContent = s.error || "calibrate failed";
+        return;
+      }
+      const label = kind === "dark" ? "dark" : "bright";
+      if (calRead) {
+        calRead.innerHTML =
+          label + " = <b>" + s.raw + "</b>" +
+          " · dark <b>" + s.dark + "</b>" +
+          " · bright <b>" + s.day + "</b>";
+      }
+      load();
+    } catch (err) {
+      if (calRead) calRead.textContent = "calibrate failed";
+    }
   };
 });
 const svg = document.getElementById("chart");

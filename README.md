@@ -141,7 +141,7 @@ The badge on the photo shows when the last still was taken. HDMI and phone/compu
 
 ## Today's light
 
-The Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a **24-hour** chart of accumulated sun-hours (Pacific midnight to midnight). **Actual** is the integral of the photoresistor (or a labeled simulator if the Arduino is missing) — not a copy of the expected curve. Expected is a solar-shaped ramp 07:00–19:00. Auto lamp still follows that daytime window.
+The Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a **24-hour** chart of accumulated sun-hours (Pacific midnight to midnight). **Actual** is the integral of the photoresistor (or a labeled simulator if the Arduino is missing) — not a copy of the expected curve. Expected is a solar-shaped ramp 07:00–19:00. Auto lamp still follows that daytime window. **Set dark / Set bright** on that page capture the current ADC as 0% and 100%. HDMI keeps the bar, no chart.
 
 ## Calibrate moisture (this is what makes the % accurate)
 

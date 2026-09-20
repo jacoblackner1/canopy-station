@@ -429,6 +429,8 @@ def light_today_payload() -> dict:
             "samples": len(LIGHT["samples"]),
             "source": LIGHT.get("source") or "simulator",
             "lastSample": LIGHT["samples"][-1]["t"] if LIGHT["samples"] else None,
+            "dark": int(CFG["lightDark"]),
+            "day": int(CFG["lightDay"]),
         },
     }
 
@@ -1073,9 +1075,12 @@ def calibrate(kind: str):
             return jsonify({"ok": False, "error": "no sensor reading yet"}), 400
         CFG[key] = int(raw)
         dry, wet = CFG["moistureDry"], CFG["moistureWet"]
+        dark, day = CFG["lightDark"], CFG["lightDay"]
         m_raw, l_raw = STATE["moisture_raw"], STATE["light_raw"]
     if key.startswith("moisture") and dry == wet:
         return jsonify({"ok": False, "error": "air and water cannot be the same"}), 400
+    if key.startswith("light") and dark == day:
+        return jsonify({"ok": False, "error": "dark and bright cannot be the same"}), 400
     save_cfg(CFG)
     global CFG_MTIME
     try:
@@ -1089,7 +1094,15 @@ def calibrate(kind: str):
             STATE["light"] = light
         refresh_status()
     print(f"calibrated {key} = {raw}", flush=True)
-    return jsonify({"ok": True, "key": key, "raw": int(raw), "dry": CFG["moistureDry"], "wet": CFG["moistureWet"]})
+    return jsonify({
+        "ok": True,
+        "key": key,
+        "raw": int(raw),
+        "dry": CFG["moistureDry"],
+        "wet": CFG["moistureWet"],
+        "dark": CFG["lightDark"],
+        "day": CFG["lightDay"],
+    })
 
 
 @app.post("/plant/<kind>")
