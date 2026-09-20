@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Soil moisture · Canopy</title>
+<style>
+  :root {
+    --bg: #0c0f0c; --surface: #151a15; --surface-2: #1c231c;
+    --fg: #e8eee6; --muted: #8a9386; --subtle: #5e675b;
+    --primary: #9cba8b; --primary-fg: #0c0f0c;
+    --warn: #c4a574; --alert: #c47a6a; --ok: #8fba8a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%;
+    background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; min-height: 44px;
+  }
+  a.back {
+    color: var(--muted); text-decoration: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 44px; padding: 0 8px; border-radius: 8px;
+  }
+  a.back:hover { color: var(--fg); background: var(--surface-2); }
+  main { padding: 8px 16px 24px; max-width: 56rem; margin: 0 auto; }
+  .card {
+    background: var(--surface); border-radius: 20px;
+    padding: 24px 24px 28px;
+    box-shadow: 0 0 0 1px rgba(232,238,230,.08);
+  }
+  .k { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; display: flex; align-items: baseline; gap: 10px; }
+  .num { font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.8rem, 9vw, 3.75rem); margin: 6px 0 0; letter-spacing: -0.03em; line-height: 1; }
+  .num span { font-family: "Segoe UI", system-ui, sans-serif; font-size: 1rem; color: var(--muted); margin-left: 8px; font-style: normal; }
+  .line { margin: 12px 0 0; font-size: 15px; }
+  .line.behind { color: var(--alert); }
+  .line.ahead { color: var(--ok); }
+  svg { width: 100%; height: auto; display: block; margin-top: 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .sw { display: inline-block; width: 16px; height: 2px; vertical-align: middle; margin-right: 6px; }
+  .sw.exp { border-top: 1.5px dashed var(--muted); height: 0; }
+  .sw.act { background: var(--primary); }
+  .sw.gap { width: 8px; height: 8px; border-radius: 999px; background: var(--warn); }
+  .foot {
+    margin-top: 16px;
+    font-family: ui-monospace, monospace;
+    font-size: 12px; color: var(--muted);
+    display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline;
+  }
+  .foot b { font-weight: 500; color: var(--fg); }
+  .cal {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;
+  }
+  .cal button, .go {
+    min-height: 44px; border: 0; border-radius: 999px; cursor: pointer;
+    font: 500 14px "Segoe UI", system-ui, sans-serif;
+    background: transparent; color: var(--muted);
+    box-shadow: 0 0 0 1px rgba(232,238,230,.14);
+    width: 100%;
+  }
+  .go {
+    margin-top: 24px; min-height: 48px; font-size: 16px;
+    background: var(--primary); color: var(--primary-fg); box-shadow: none;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .go:disabled { opacity: .4; cursor: default; }
+  .hint { margin: 24px 0 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+  .cal-read {
+    margin: 8px 0 0;
+    font-family: ui-monospace, monospace;
+    font-size: 12px; color: var(--muted);
+  }
+  .cal-read b { font-weight: 500; color: var(--fg); }
+  .reset {
+    margin-top: 8px; background: none; border: 0; color: var(--subtle);
+    font-size: 12px; cursor: pointer; padding: 0; text-align: left; width: auto;
+    min-height: 0; box-shadow: none;
+  }
+  .tip {
+    position: absolute; pointer-events: none;
+    background: var(--surface-2); color: var(--fg);
+    font-family: ui-monospace, monospace; font-size: 12px;
+    padding: 6px 8px; border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(232,238,230,.12);
+  }
+  .chart-wrap { position: relative; }
+  .sim {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    letter-spacing: .06em; color: var(--warn); margin: 0 0 0 auto;
+  }
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">← Back</a>
+  <p style="margin:0;font-family:Georgia,serif">Canopy</p>
+</header>
+<main>
+  <section class="card">
+    <p class="k">Soil moisture <span class="sim" id="simLab" hidden>SIMULATED</span></p>
+    <p class="num" id="acc">—<span>%</span></p>
+    <p class="line" id="status">—</p>
+    <div class="chart-wrap">
+      <svg id="chart" viewBox="0 0 720 320" role="img" aria-label="Soil moisture last seven days"></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <div class="legend">
+      <span><i class="sw act"></i>Moisture</span>
+      <span><i class="sw exp"></i>Threshold</span>
+      <span><i class="sw gap"></i>Pump</span>
+    </div>
+    <p class="foot" id="foot">—</p>
+    <p class="hint">Probe in air, then Set air. Probe in water, then Set water. That maps raw ADC to 0–100%.</p>
+    <div class="cal">
+      <button type="button" data-cal="air">Set air</button>
+      <button type="button" data-cal="water">Set water</button>
+    </div>
+    <p class="cal-read" id="calRead">raw —</p>
+    <button type="button" class="reset" id="resetCal">Reset air/water</button>
+    <button type="button" class="go" id="water">Water 1s</button>
+  </section>
+</main>
+<script>
+function fmt(n) { return Number(n).toFixed(1); }
+function clock(ms) {
+  return new Date(ms).toLocaleTimeString("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+function weekTick(ms) {
+  return new Date(ms).toLocaleDateString("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+  });
+}
+function polyPath(pts) {
+  if (!pts.length) return "";
+  return pts.map((s, i) => (i ? "L " : "M ") + s.split(",").map((n) => Number(n).toFixed(1)).join(" ")).join(" ");
+}
+function srcLabel(s) {
+  if (s === "auto") return "auto";
+  if (s === "moisture") return "moisture page";
+  if (s === "home") return "home";
+  return "—";
+}
+function draw(data) {
+  const svg = document.getElementById("chart");
+  const pad = { l: 36, r: 18, t: 22, b: 28 };
+  const W = 720, H = 320, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  const start = data.window.startMs, end = data.window.endMs;
+  const span = Math.max(1, end - start);
+  const ymax = 100;
+  const x = (t) => pad.l + ((t - start) / span) * iw;
+  const y = (v) => pad.t + ih - (v / ymax) * ih;
+  const samples = (data.samples || []).filter((p) => p.t <= data.now && p.pump_event !== "start");
+  const pumps = (data.samples || []).filter((p) => p.pump_event === "start" && p.t <= data.now);
+  const last = samples[samples.length - 1];
+  const nowT = Math.min(Math.max(data.now, start), end);
+  const actPts = samples.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+  const under = last && samples.length
+    ? x(samples[0].t).toFixed(1) + "," + y(0).toFixed(1) + " " + actPts.join(" ") + " " + x(last.t).toFixed(1) + "," + y(0).toFixed(1)
+    : "";
+  const nowOnRight = (nowT - start) / span > 0.88;
+  const ticks = [];
+  for (let t = start; t <= end + 60000; t += 24 * 3600 * 1000) ticks.push(Math.min(t, end));
+  const parts = [];
+  ticks.forEach((t) => {
+    parts.push(`<text x="${x(t)}" y="${H - 8}" text-anchor="middle" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">${weekTick(t)}</text>`);
+  });
+  parts.push(`<text x="4" y="${y(100) + 4}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">100</text>`);
+  parts.push(`<text x="4" y="${y(0)}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">0</text>`);
+  if (under) parts.push(`<polygon points="${under}" fill="#9cba8b" opacity="0.1"/>`);
+  parts.push(`<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(data.threshold || 40)}" y2="${y(data.threshold || 40)}" stroke="#8a9386" stroke-width="1.5" stroke-dasharray="5 5"/>`);
+  if (actPts.length) parts.push(`<path d="${polyPath(actPts)}" fill="none" stroke="#9cba8b" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`);
+  pumps.forEach((p) => {
+    parts.push(`<line x1="${x(p.t)}" x2="${x(p.t)}" y1="${y(0)}" y2="${y(p.v)}" stroke="#c4a574" stroke-width="1" opacity="0.55"/>`);
+    parts.push(`<circle cx="${x(p.t)}" cy="${y(p.v)}" r="3.5" fill="#c4a574"/>`);
+  });
+  parts.push(`<line x1="${x(nowT)}" x2="${x(nowT)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="#e8eee6" stroke-width="1" opacity="0.4"/>`);
+  parts.push(`<text x="${x(nowT) + (nowOnRight ? -8 : 6)}" y="${pad.t - 6}" text-anchor="${nowOnRight ? "end" : "start"}" fill="#8a9386" font-size="11" font-family="ui-monospace,monospace">now</text>`);
+  svg.innerHTML = parts.join("");
+  svg._map = { start, span, x, pad, iw, W, data, samples, pumps };
+}
+function apply(data) {
+  const below = data.current < (data.threshold || 40) - 0.3;
+  document.getElementById("acc").innerHTML = fmt(data.current) + "<span>%</span>";
+  let line = data.pump ? "Pump on" : (data.lastPump ? ("Last watered " + clock(data.lastPump)) : "Pump idle");
+  if (below && !data.pump) line += " · −" + fmt((data.threshold || 40) - data.current) + "% below target";
+  const st = document.getElementById("status");
+  st.textContent = line;
+  st.className = "line " + (below ? "behind" : "ahead");
+  const lastTxt = data.lastPump ? clock(data.lastPump) : "idle";
+  document.getElementById("foot").innerHTML =
+    "Now <b>" + fmt(data.current) + "%</b>" +
+    " <span>·</span> 7-day <b>" + fmt(data.min7) + "–" + fmt(data.max7) + "%</b>" +
+    " <span>·</span> Last pump <b>" + lastTxt + "</b>" +
+    " <span>·</span> Samples <b>" + data.sampleCount + "</b>";
+  const simLab = document.getElementById("simLab");
+  if (simLab) simLab.hidden = data.source !== "simulator";
+  const calRead = document.getElementById("calRead");
+  if (calRead) {
+    calRead.innerHTML =
+      "raw <b>" + (data.raw == null ? "—" : data.raw) + "</b>" +
+      " · " + fmt(data.current) + "%" +
+      " · air <b>" + data.dry + "</b>" +
+      " · water <b>" + data.wet + "</b>";
+  }
+  document.getElementById("water").disabled = !!data.pump;
+  draw(data);
+  window._moist = data;
+}
+async function load() {
+  const res = await fetch("/api/moisture/week", { cache: "no-store" });
+  apply(await res.json());
+}
+document.querySelectorAll(".cal button").forEach((b) => {
+  b.onclick = async () => {
+    const kind = b.getAttribute("data-cal");
+    const calRead = document.getElementById("calRead");
+    try {
+      const res = await fetch("/calibrate/" + kind, { method: "POST" });
+      const s = await res.json();
+      if (!s.ok) {
+        if (calRead) calRead.textContent = s.error || "calibrate failed";
+        return;
+      }
+      if (calRead) {
+        calRead.innerHTML = kind + " = <b>" + s.raw + "</b> · air <b>" + s.dry + "</b> · water <b>" + s.wet + "</b>";
+      }
+      load();
+    } catch (err) {
+      if (calRead) calRead.textContent = "calibrate failed";
+    }
+  };
+});
+document.getElementById("resetCal").onclick = async () => {
+  await fetch("/calibrate/reset-moisture", { method: "POST" });
+  load();
+};
+document.getElementById("water").onclick = async () => {
+  await fetch("/water", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "moisture" }),
+  });
+  setTimeout(load, 200);
+  setTimeout(load, 1200);
+};
+const svg = document.getElementById("chart");
+const tip = document.getElementById("tip");
+function tipAt(clientX) {
+  const m = svg._map;
+  if (!m) return;
+  const r = svg.getBoundingClientRect();
+  const px = ((clientX - r.left) / r.width) * m.W;
+  const t = m.start + ((px - m.pad.l) / m.iw) * m.span;
+  const nearest = (arr) => arr.reduce((b, p) => Math.abs(p.t - t) < Math.abs(b.t - t) ? p : b);
+  const samp = m.samples.length ? nearest(m.samples) : { t, v: 0, pump: false };
+  const pump = m.pumps.length ? nearest(m.pumps) : null;
+  const usePump = pump && Math.abs(pump.t - t) < Math.abs(samp.t - t) && Math.abs(pump.t - t) < 90 * 60 * 1000;
+  tip.hidden = false;
+  tip.style.left = Math.min(70, Math.max(4, ((t - m.start) / m.span) * 100)) + "%";
+  tip.style.top = "28px";
+  if (usePump) {
+    tip.innerHTML = clock(pump.t) + "<br>" + fmt(pump.v) + "% at start<br>" +
+      (pump.durationMs || 1000) + "ms · " + srcLabel(pump.source);
+  } else {
+    tip.innerHTML = clock(samp.t) + "<br>" + fmt(samp.v) + "%<br>" + (samp.pump ? "pump ON" : "pump OFF");
+  }
+}
+svg.addEventListener("mousemove", (e) => tipAt(e.clientX));
+svg.addEventListener("mouseleave", () => { tip.hidden = true; });
+svg.addEventListener("touchstart", (e) => { if (e.touches[0]) tipAt(e.touches[0].clientX); }, { passive: true });
+svg.addEventListener("touchmove", (e) => { if (e.touches[0]) tipAt(e.touches[0].clientX); }, { passive: true });
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

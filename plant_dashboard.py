@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parent
 CFG_PATH = ROOT / "station.json"
 KIND_PATH = ROOT / "plant.kind"
 LIGHT_PATH = ROOT / "light-today.json"
+MOISTURE_PATH = ROOT / "moisture-week.json"
 STATION_TZ = ZoneInfo("America/Los_Angeles")
 
 # 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
@@ -131,6 +132,14 @@ LIGHT = {
     "last_dt": 0.0,
     "last_intensity": 0.0,
     "last_raw": None,
+    "source": "simulator",
+}
+MOIST = {
+    "samples": [],
+    "last_sample_t": 0.0,
+    "last_pump": None,
+    "last_source": None,
+    "last_duration_ms": 1000,
     "source": "simulator",
 }
 
@@ -396,6 +405,203 @@ def save_light_day() -> None:
         print(f"light-today save failed: {exc}", flush=True)
 
 
+WEEK_MS = 7 * 24 * 3600 * 1000
+MOIST_KEEP = 2500
+
+
+def _week_start_ms(now: datetime) -> int:
+    midnight, _ = day_bounds(now)
+    start = midnight
+    for _ in range(6):
+        start = day_bounds(start - timedelta(hours=20))[0]
+    return int(start.timestamp() * 1000)
+
+
+def _week_end_ms(now: datetime) -> int:
+    _, nxt = day_bounds(now)
+    return int(nxt.timestamp() * 1000)
+
+
+def simulated_moisture_week(now: datetime | None = None) -> list:
+    now = now or station_now()
+    start_ms = _week_start_ms(now)
+    end_ms = int(now.timestamp() * 1000)
+    step = 5 * 60 * 1000
+    out = []
+    v = 58.0
+    last_pump = start_ms - 12 * 3600 * 1000
+    t = start_ms
+    day = now.strftime("%Y-%m-%d")
+    while t <= end_ms:
+        noise = (_u01(f"m-{day}-{t}") - 0.48) * 4.2
+        v = max(14.0, min(90.0, v - 0.28 + noise))
+        if v < 40 and t - last_pump > 9 * 3600 * 1000:
+            out.append(
+                {
+                    "t": t,
+                    "v": round(v, 2),
+                    "pump": True,
+                    "pump_event": "start",
+                    "source": "auto",
+                    "durationMs": 1000,
+                    "raw": None,
+                }
+            )
+            v = min(88.0, v + 12 + _u01(f"w-{t}") * 8)
+            last_pump = t
+            out.append(
+                {
+                    "t": t + 1000,
+                    "v": round(v, 2),
+                    "pump": False,
+                    "pump_event": "stop",
+                    "source": "auto",
+                    "durationMs": 1000,
+                    "raw": None,
+                }
+            )
+            t += step
+            continue
+        out.append(
+            {
+                "t": t,
+                "v": round(v, 2),
+                "pump": False,
+                "pump_event": None,
+                "source": None,
+                "raw": None,
+            }
+        )
+        t += step
+    return out[-MOIST_KEEP:]
+
+
+def prune_moisture(samples: list, now_ms: int) -> list:
+    cut = now_ms - WEEK_MS
+    return [p for p in samples if int(p.get("t") or 0) >= cut][-MOIST_KEEP:]
+
+
+def save_moisture_week() -> None:
+    try:
+        MOISTURE_PATH.write_text(
+            json.dumps(
+                {
+                    "samples": MOIST["samples"][-MOIST_KEEP:],
+                    "last_pump": MOIST["last_pump"],
+                    "last_source": MOIST["last_source"],
+                    "last_duration_ms": MOIST["last_duration_ms"],
+                }
+            )
+            + "\n"
+        )
+    except OSError as exc:
+        print(f"moisture-week save failed: {exc}", flush=True)
+
+
+def load_moisture_week() -> None:
+    if not MOISTURE_PATH.exists():
+        return
+    try:
+        data = json.loads(MOISTURE_PATH.read_text())
+    except Exception:
+        return
+    now_ms = int(station_now().timestamp() * 1000)
+    MOIST["samples"] = prune_moisture(list(data.get("samples") or []), now_ms)
+    MOIST["last_pump"] = data.get("last_pump")
+    MOIST["last_source"] = data.get("last_source")
+    MOIST["last_duration_ms"] = int(data.get("last_duration_ms") or 1000)
+
+
+def append_moisture_sample(
+    *,
+    pump: bool = False,
+    pump_event: str | None = None,
+    source: str | None = None,
+    duration_ms: int | None = None,
+    persist: bool = True,
+) -> None:
+    """Record current moisture %. Pump events are extra immediate writes."""
+    now_ms = int(time.time() * 1000)
+    with LOCK:
+        v = float(STATE["moisture"])
+        raw = STATE["moisture_raw"]
+        sensors_ok = bool(STATE["sensors_ok"])
+        samples = list(MOIST["samples"])
+    point = {
+        "t": now_ms,
+        "v": round(v, 2),
+        "pump": bool(pump),
+        "pump_event": pump_event,
+        "source": source,
+        "raw": int(raw) if raw is not None else None,
+        "durationMs": duration_ms,
+    }
+    samples = prune_moisture(samples + [point], now_ms)
+    with LOCK:
+        MOIST["samples"] = samples
+        MOIST["source"] = "hardware" if sensors_ok else "simulator"
+        if pump_event is None:
+            MOIST["last_sample_t"] = time.time()
+        if pump_event == "start":
+            MOIST["last_pump"] = time.time()
+            MOIST["last_source"] = source
+            MOIST["last_duration_ms"] = int(duration_ms or CFG.get("waterPulseMs") or 1000)
+    if persist:
+        save_moisture_week()
+
+
+def moisture_week_payload() -> dict:
+    now = station_now()
+    now_ms = int(now.timestamp() * 1000)
+    with LOCK:
+        samples = list(MOIST["samples"])
+        sensors_ok = bool(STATE["sensors_ok"])
+        current = float(STATE["moisture"])
+        raw = STATE["moisture_raw"]
+        pump = bool(STATE["pump"])
+        last_pump = MOIST["last_pump"]
+        last_source = MOIST["last_source"]
+        last_duration = MOIST["last_duration_ms"]
+        src = MOIST.get("source") or "simulator"
+    if sensors_ok:
+        src = "hardware"
+    if not samples and src != "hardware":
+        samples = simulated_moisture_week(now)
+        src = "simulator"
+    vals = [float(p["v"]) for p in samples if p.get("pump_event") != "start"]
+    profile = current_profile()
+    return {
+        "now": now_ms,
+        "window": {
+            "startMs": _week_start_ms(now),
+            "endMs": _week_end_ms(now),
+        },
+        "samples": samples,
+        "current": current,
+        "raw": raw,
+        "dry": int(CFG["moistureDry"]),
+        "wet": int(CFG["moistureWet"]),
+        "threshold": profile["low"],
+        "high": profile["high"],
+        "pump": pump,
+        "lastPump": int(last_pump * 1000) if last_pump else None,
+        "lastSource": last_source,
+        "lastDurationMs": last_duration,
+        "min7": round(min(vals), 1) if vals else 0,
+        "max7": round(max(vals), 1) if vals else 0,
+        "sampleCount": len(samples),
+        "source": src,
+        "unit": "%",
+        "debug": {
+            "raw": raw,
+            "dry": int(CFG["moistureDry"]),
+            "wet": int(CFG["moistureWet"]),
+            "samples": len(samples),
+            "source": src,
+        },
+    }
+
+
 def light_today_payload() -> dict:
     now = station_now()
     midnight, next_mid = day_bounds(now)
@@ -560,6 +766,7 @@ def light_tick() -> None:
 
 
 load_light_day()
+load_moisture_week()
 
 _p0 = current_profile()
 STATE["profile"] = _p0["label"]
@@ -653,16 +860,31 @@ def send(cmd: str) -> None:
         print(f"serial write failed: {exc}", flush=True)
 
 
-def water_pulse() -> None:
+def water_pulse(source: str = "home") -> None:
+    duration_ms = int(CFG.get("waterPulseMs") or 1000)
     with LOCK:
         if STATE["pump"]:
             return
         STATE["pump"] = True
+    if source not in ("home", "moisture", "auto"):
+        source = "home"
+    append_moisture_sample(
+        pump=True,
+        pump_event="start",
+        source=source,
+        duration_ms=duration_ms,
+    )
     send("WATER_ON")
-    time.sleep(max(0.2, CFG["waterPulseMs"] / 1000.0))
+    time.sleep(max(0.2, duration_ms / 1000.0))
     send("WATER_OFF")
     with LOCK:
         STATE["pump"] = False
+    append_moisture_sample(
+        pump=False,
+        pump_event="stop",
+        source=source,
+        duration_ms=duration_ms,
+    )
 
 
 def set_lamp(on: bool) -> None:
@@ -887,11 +1109,12 @@ def auto_loop() -> None:
         with LOCK:
             STATE["last_auto"] = now
         grab_snapshot()
+        append_moisture_sample(persist=True)
         if not sensors_ok:
             continue
         profile = current_profile()
         if moisture < profile["low"]:
-            threading.Thread(target=water_pulse, daemon=True).start()
+            threading.Thread(target=water_pulse, args=("auto",), daemon=True).start()
 
 
 app = Flask(__name__)
@@ -976,8 +1199,12 @@ def status():
 
 @app.post("/water")
 def water():
-    threading.Thread(target=water_pulse, daemon=True).start()
-    return jsonify({"ok": True})
+    body = request.get_json(silent=True) or {}
+    source = str(body.get("source") or "home").strip().lower()
+    if source not in ("home", "moisture", "auto"):
+        source = "home"
+    threading.Thread(target=water_pulse, args=(source,), daemon=True).start()
+    return jsonify({"ok": True, "source": source})
 
 
 @app.post("/light")
@@ -993,6 +1220,21 @@ def light():
     LIGHT["lamp_since"] = time.time() if on else None
     LIGHT["lamp_on_at"] = time.time() if on else 0.0
     return jsonify({"ok": True, "lamp": on, "override": CFG["lightOverride"]})
+
+
+@app.get("/moisture")
+def moisture_page():
+    path = ROOT / "moisture.html"
+    if not path.exists():
+        return "moisture.html missing", 404
+    resp = make_response(path.read_text())
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/moisture/week")
+def api_moisture_week():
+    return jsonify(moisture_week_payload())
 
 
 @app.get("/light")
@@ -1067,6 +1309,17 @@ def calibrate(kind: str):
         "moistureWet": "moistureWet",
     }
     key = mapping.get(kind)
+    if kind in ("reset", "reset-moisture"):
+        CFG["moistureDry"] = int(DEFAULTS["moistureDry"])
+        CFG["moistureWet"] = int(DEFAULTS["moistureWet"])
+        save_cfg(CFG)
+        print("moisture cal reset", flush=True)
+        return jsonify({
+            "ok": True,
+            "key": "reset",
+            "dry": CFG["moistureDry"],
+            "wet": CFG["moistureWet"],
+        })
     if key is None:
         return jsonify({"ok": False, "error": "unknown kind"}), 400
     with LOCK:

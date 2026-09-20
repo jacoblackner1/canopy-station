@@ -177,7 +177,10 @@
         <p class="status ok" id="status">Waiting</p>
         <p class="sub" id="profile">—</p>
       </div>
-      <div class="meter" id="m-moist"></div>
+      <a class="meter-link" href="/moisture" id="moist-link">
+        <div class="meter" id="m-moist"></div>
+        <p class="light-hint" id="moistHint">Soil moisture</p>
+      </a>
       <a class="meter-link" href="/light" id="light-link">
         <div class="meter" id="m-light"></div>
         <p class="light-hint" id="lightHint">Today’s light</p>
@@ -203,10 +206,6 @@
           <button type="button" data-plant="succulent">Succulent</button>
         </div>
         <p class="band controls" id="band">Moisture 40–70%</p>
-        <div class="cal controls">
-          <button type="button" id="setAir">Set air</button>
-          <button type="button" id="setWater">Set water</button>
-        </div>
         <div class="controls">
           <button class="power" id="power" type="button">Shut down</button>
         </div>
@@ -286,6 +285,12 @@ async function refresh() {
     const moistLow = p ? p.low : s.low;
     const moistHigh = p ? p.high : s.high;
     meter(document.getElementById("m-moist"), "Moisture", s.moisture, moistLow, moistHigh, ready);
+    const moistHint = document.getElementById("moistHint");
+    if (moistHint && moistLow != null && s.moisture != null) {
+      const m = num(s.moisture);
+      if (m < moistLow - 0.3) moistHint.textContent = "−" + (moistLow - m).toFixed(1) + " below target";
+      else moistHint.textContent = "tap for 7-day";
+    }
     meter(document.getElementById("m-light"), "Light", s.light, 40, null, ready);
     const hint = document.getElementById("lightHint");
     if (hint && s.light_delta != null) {
@@ -314,7 +319,6 @@ async function refresh() {
     const rawEl = document.getElementById("raw");
     if (ready) {
       let t = "raw " + s.moisture_raw + " / " + s.light_raw;
-      if (!KIOSK) t += "  dry " + s.moisture_dry + " wet " + s.moisture_wet;
       if (s.lamp && num(s.lamp_delta)) {
         t += "  lamp " + (s.lamp_delta > 0 ? "−" : "+") + Math.abs(num(s.lamp_delta));
       }
@@ -369,10 +373,12 @@ async function calibrate(kind) {
   refresh();
 }
 if (!KIOSK) {
-  document.getElementById("water").onclick = () => fetch("/water", { method: "POST" });
+  document.getElementById("water").onclick = () => fetch("/water", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "home" }),
+  });
   document.getElementById("lamp").onclick = () => fetch("/light", { method: "POST" });
-  document.getElementById("setAir").onclick = () => calibrate("air");
-  document.getElementById("setWater").onclick = () => calibrate("water");
   document.querySelectorAll("#plants [data-plant]").forEach((b) => {
     b.onclick = async () => {
       const id = b.getAttribute("data-plant");

@@ -53,7 +53,7 @@ cd ~/canopy-station
 ./scripts/start_kiosk.sh
 ```
 
-Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — full screen, with Water, Lamp, and Set air / Set water.
+Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — full screen, with Water and Lamp. Tap **Moisture** for the 7-day chart, Set air / Set water, and another Water 1s. Tap **Light** for today’s light. HDMI is stats only.
 
 **Remote access** (optional): Cloudflare Tunnel + Access, no router port-forward. Same UI after email OTP. See [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md).
 
@@ -75,7 +75,7 @@ sudo ./scripts/install_hdmi.sh
 sudo reboot
 ```
 
-Stop the manual `python3 plant_dashboard.py` first (Ctrl+C) — the installer starts it as a service. After reboot the panel should be Canopy, not Armbian. Phone and computer keep Water / Lamp / calibrate at `http://<pi-lan-ip>:5000/`.
+Stop the manual `python3 plant_dashboard.py` first (Ctrl+C) — the installer starts it as a service. After reboot the panel should be Canopy, not Armbian. Phone and computer keep Water / Lamp at `http://<pi-lan-ip>:5000/`; calibration lives on `/moisture` and `/light`.
 
 If HDMI is still Armbian:
 
@@ -138,6 +138,10 @@ Then hard-refresh the phone/computer page. HDMI has no picker. If the type snaps
 The dashboard shows a **still**, not a live stream. A new frame is taken on the same tick as auto-water (default **5 minutes**, `autoSeconds` in `station.json`). Green / yellow meters come from that still. Between ticks the USB camera is closed so the Pi is not encoding video all day.
 
 The badge on the photo shows when the last still was taken. HDMI and phone/computer share that image.
+
+## Soil moisture
+
+The Moisture bar on the phone/computer page still shows instantaneous %. Tap it to open `/moisture` — a **7-day** polyline of measured moisture (nights included), a dashed irrigate threshold, and pump marks. **Set air / Set water** live on that page only. Home keeps the 1-second Water button; `/moisture` has the same action (`POST /water`, same relay). HDMI keeps the bar, no chart.
 
 ## Today's light
 
