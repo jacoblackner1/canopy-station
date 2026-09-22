@@ -1247,13 +1247,31 @@ def load_page(mode: str = "full") -> str:
         path = ROOT / "kiosk.html"
     html = path.read_text()
     kind = "kiosk" if mode == "kiosk" else "full"
-    resp = make_response(html.replace("{{MODE}}", kind))
+    html = html.replace("{{MODE}}", kind)
+    if kind == "kiosk":
+        # HDMI cannot render a snapshot even if CSS fails.
+        html = re.sub(r"<!--CAM-->.*?<!--/CAM-->", "", html, count=1, flags=re.S)
+        html = html.replace('src="/snapshot"', 'src=""')
+    resp = make_response(html)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
+def _local_hdmi() -> bool:
+    """Chromium on the panel talks to 127.0.0.1; phones use the LAN hostname."""
+    host = (request.host or "").split("%")[0]
+    if host.startswith("["):
+        host = host.split("]")[0].lstrip("[").lower()
+    else:
+        host = host.split(":")[0].lower()
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
 @app.get("/")
 def home():
+    # HDMI kiosk often lands on / not /kiosk. Localhost → charts, LAN → camera.
+    if _local_hdmi():
+        return load_page("kiosk")
     return load_page("full")
 
 

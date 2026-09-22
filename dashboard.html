@@ -41,7 +41,8 @@
   }
   header .clock { font-family: ui-monospace, monospace; font-size: clamp(12px, 2vh, 16px); color: var(--muted); margin: 0; }
   .body { display: flex; flex: 1; min-height: 0; }
-  .cam { position: relative; flex: 1; min-width: 0; background: var(--surface-2); }
+  .cam { position: relative; flex: 1; min-width: 0; background: var(--surface-2); display: none !important; }
+  body.full .cam { display: block !important; }
   .cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .cam .scrim {
     pointer-events: none; position: absolute; inset: 0;
@@ -129,10 +130,8 @@
   }
   body.kiosk .light-hint { display: none; }
   body.kiosk .meter-link { pointer-events: none; }
-  body.kiosk .cam { display: none !important; }
-  body.kiosk .hdmi-charts { display: flex; }
   .hdmi-charts {
-    display: none;
+    display: flex;
     flex: 1;
     min-width: 0;
     min-height: 0;
@@ -141,6 +140,7 @@
     padding: 6px;
     background: var(--bg);
   }
+  body.full .hdmi-charts { display: none !important; }
   .hdmi-charts section {
     flex: 1 1 0%;
     min-height: 0;
@@ -212,14 +212,16 @@
     </div>
   </header>
   <div class="body">
+    <!--CAM-->
     <div class="cam" id="camPane">
-      <img id="cam" src="/snapshot" alt="Station camera"/>
+      <img id="cam" alt="Station camera"/>
       <div class="scrim"></div>
       <div class="badge"><span class="dot"></span> <span id="snapLabel">Snapshot</span></div>
       <div class="flag pulse" id="pulse" hidden>Pulse</div>
       <div class="flag lamp" id="lampFlag" hidden>Lamp</div>
       <p class="plant" id="plant">—</p>
     </div>
+    <!--/CAM-->
     <div class="hdmi-charts" id="hdmiCharts" aria-label="Station charts">
       <section>
         <p class="k">Today's light</p>
@@ -277,7 +279,7 @@
   </div>
 </div>
 <script>
-const KIOSK = document.body.classList.contains("kiosk");
+const KIOSK = !document.body.classList.contains("full");
 if (KIOSK) {
   const cam0 = document.getElementById("cam");
   if (cam0) cam0.removeAttribute("src");
@@ -322,7 +324,8 @@ function markPlant(id, low, high, label) {
   const name = label || p.label;
   if (name) {
     document.getElementById("profile").textContent = name;
-    document.getElementById("plant").textContent = name;
+    const plantEl = document.getElementById("plant");
+    if (plantEl) plantEl.textContent = name;
   }
   const lo = low != null ? low : p.low;
   const hi = high != null ? high : p.high;
@@ -347,7 +350,8 @@ async function refresh() {
       markPlant(chosenPlant, p.low, p.high, p.label);
     } else {
       document.getElementById("profile").textContent = s.profile || "—";
-      document.getElementById("plant").textContent = s.profile || "—";
+      const plantEl = document.getElementById("plant");
+      if (plantEl) plantEl.textContent = s.profile || "—";
     }
     const moistLow = p ? p.low : s.low;
     const moistHigh = p ? p.high : s.high;
@@ -369,8 +373,10 @@ async function refresh() {
     }
     meter(document.getElementById("m-green"), "Green", num(s.green) * 100, null, null, true);
     meter(document.getElementById("m-yellow"), "Yellow", num(s.yellow) * 100, null, 15, true);
-    document.getElementById("pulse").hidden = !s.pump;
-    document.getElementById("lampFlag").hidden = !s.lamp || s.pump;
+    const pulse = document.getElementById("pulse");
+    const lampFlag = document.getElementById("lampFlag");
+    if (pulse) pulse.hidden = !s.pump;
+    if (lampFlag) lampFlag.hidden = !s.lamp || s.pump;
     const lampBtn = document.getElementById("lamp");
     const lampLabel = document.getElementById("lampLabel");
     if (lampBtn && lampLabel) {

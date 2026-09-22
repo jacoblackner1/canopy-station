@@ -66,7 +66,7 @@ sudo ./scripts/install_tunnel.sh
 Then create the named tunnel, fill `/etc/cloudflared/config.yml`, and put Access on the hostname. LAN `:5000` and HDMI stay as they are.
 
 
-The HDMI panel is stats only (camera + meters, no buttons). This image has **no desktop** — HDMI stays on the Armbian splash because nothing owns the screen. The installer now puts a tiny kiosk compositor on tty1 (cage if available, otherwise X + openbox) so Chromium can actually take HDMI.
+The HDMI panel is stats only (today’s light chart + 7-day moisture chart + meters, no camera, no buttons). This image has **no desktop** — HDMI stays on the Armbian splash because nothing owns the screen. The installer now puts a tiny kiosk compositor on tty1 (cage if available, otherwise X + openbox) so Chromium can actually take HDMI.
 
 ```bash
 cd ~/canopy-station
@@ -135,9 +135,9 @@ Then hard-refresh the phone/computer page. HDMI has no picker. If the type snaps
 
 ## Camera snapshot
 
-The dashboard shows a **still**, not a live stream. A new frame is taken on the same tick as auto-water (default **5 minutes**, `autoSeconds` in `station.json`). Green / yellow meters come from that still. Between ticks the USB camera is closed so the Pi is not encoding video all day.
+The phone/computer page shows a **still**, not a live stream. A new frame is taken on the same tick as auto-water (default **5 minutes**, `autoSeconds` in `station.json`). Green / yellow meters come from that still. Between ticks the USB camera is closed so the Pi is not encoding video all day.
 
-The badge on the photo shows when the last still was taken. HDMI and phone/computer share that image.
+The badge on the photo shows when the last still was taken. HDMI does not show the camera — that slot is the two charts.
 
 ## Soil moisture
 
