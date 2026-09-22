@@ -48,8 +48,9 @@ DEFAULTS = {
     "lightWindowStart": "07:00",
     "lightWindowEnd": "19:00",
     "lightDailyTarget": 6.0,
-    "lightHysteresis": 0.15,
+    "lightHysteresis": 0.3,
     "lightMinOnSec": 300,
+    "lightMinOffSec": 300,
     "lightOverride": "auto",
     "lampMoistDelta": 0,
     "flaskHost": "0.0.0.0",
@@ -130,6 +131,7 @@ LIGHT = {
     "samples": [],
     "lamp_since": None,
     "lamp_on_at": 0.0,
+    "lamp_off_at": 0.0,
     "last_dt": 0.0,
     "last_intensity": 0.0,
     "last_raw": None,
@@ -384,6 +386,8 @@ def in_light_window(now: datetime | None = None) -> bool:
 
 LIGHT_SAMPLE_SEC = 300
 LIGHT_KEEP = 2880
+LAMP_ON_DELTA = -0.3
+LAMP_OFF_DELTA = 0.3
 
 
 def prune_light_samples(samples: list, midnight_ms: int) -> list:
@@ -633,6 +637,26 @@ def moisture_week_payload() -> dict:
     }
 
 
+def lamp_status_line(delta: float, lamp: bool) -> str:
+    override = str(CFG.get("lightOverride") or "auto").lower()
+    mag = f"{abs(delta):.1f}"
+    signed = f"+{mag}" if delta >= 0 else f"−{mag}"
+    lamp_s = "lamp ON" if lamp else "lamp OFF"
+    if override == "on":
+        why = "forced on"
+    elif override == "off":
+        why = "forced off"
+    elif not in_light_window():
+        why = "outside window"
+    elif delta <= LAMP_ON_DELTA:
+        why = "behind −0.3 threshold"
+    elif delta >= LAMP_OFF_DELTA:
+        why = "caught up"
+    else:
+        why = "holding"
+    return f"{signed} · {why} · {lamp_s}"
+
+
 def light_today_payload() -> dict:
     now = station_now()
     midnight, next_mid = day_bounds(now)
@@ -659,6 +683,7 @@ def light_today_payload() -> dict:
         "lampSince": int(LIGHT["lamp_since"] * 1000) if LIGHT["lamp_since"] else None,
         "override": CFG.get("lightOverride") or "auto",
         "unit": "sun-h",
+        "statusLine": lamp_status_line(acc - expected_now, lamp),
         "debug": {
             "raw": LIGHT.get("last_raw"),
             "intensity": LIGHT.get("last_intensity"),
@@ -761,6 +786,7 @@ def maybe_light_sample() -> None:
         LIGHT["last_t"] = now_wall
         LIGHT["lamp_since"] = now_wall if STATE["lamp"] else None
         LIGHT["lamp_on_at"] = now_wall if STATE["lamp"] else 0.0
+        LIGHT["lamp_off_at"] = 0.0 if STATE["lamp"] else now_wall
         if LIGHT["samples"]:
             LIGHT["acc"] = float(LIGHT["samples"][-1].get("v") or 0)
             LIGHT["last_slot"] = float(LIGHT["samples"][-1]["t"]) / 1000.0
@@ -794,6 +820,42 @@ def maybe_light_sample() -> None:
     )
 
 
+def want_lamp_on(*, now_dt: datetime, now: float, lamp: bool, override: str) -> bool:
+    """Auto lamp: ON at delta ≤ −0.3, OFF at delta ≥ 0.3 or night, else hold."""
+    if override == "on":
+        return True
+    if override == "off":
+        return False
+    daytime = in_light_window(now_dt)
+    delta = LIGHT["acc"] - expected_light_at(now_dt)
+    if not daytime:
+        want = False
+    elif delta <= LAMP_ON_DELTA:
+        want = True
+    elif delta >= LAMP_OFF_DELTA:
+        want = False
+    else:
+        want = lamp
+    min_on = float(CFG.get("lightMinOnSec") or 300)
+    min_off = float(CFG.get("lightMinOffSec") or 300)
+    if (
+        daytime
+        and lamp
+        and not want
+        and LIGHT["lamp_on_at"]
+        and now - LIGHT["lamp_on_at"] < min_on
+    ):
+        want = True
+    if (
+        (not lamp)
+        and want
+        and LIGHT.get("lamp_off_at")
+        and now - float(LIGHT["lamp_off_at"]) < min_off
+    ):
+        want = False
+    return want
+
+
 def light_control() -> None:
     """Hysteresis / override every 1s. Does not wait for the 5-minute sample."""
     now_dt = station_now()
@@ -804,31 +866,17 @@ def light_control() -> None:
     override = str(CFG.get("lightOverride") or "auto").lower()
     if override == "auto" and not sensors_ok:
         return
-    if override == "on":
-        want = True
-    elif override == "off":
-        want = False
-    else:
-        expected = expected_light_at(now_dt)
-        hyst = float(CFG.get("lightHysteresis") or 0.15)
-        min_on = float(CFG.get("lightMinOnSec") or 300)
-        behind = LIGHT["acc"] < expected - hyst
-        if not in_light_window(now_dt):
-            want = False
-        elif behind:
-            want = True
-        elif lamp and LIGHT["lamp_on_at"] and now - LIGHT["lamp_on_at"] < min_on:
-            want = True
-        else:
-            want = False
+    want = want_lamp_on(now_dt=now_dt, now=now, lamp=lamp, override=override)
     if want != lamp:
         set_lamp(want)
         if want:
             LIGHT["lamp_on_at"] = now
+            LIGHT["lamp_off_at"] = 0.0
             if not LIGHT["lamp_since"]:
                 LIGHT["lamp_since"] = now
         else:
             LIGHT["lamp_on_at"] = 0.0
+            LIGHT["lamp_off_at"] = now
             LIGHT["lamp_since"] = None
 
 
@@ -1292,6 +1340,7 @@ def light():
         pass
     LIGHT["lamp_since"] = time.time() if on else None
     LIGHT["lamp_on_at"] = time.time() if on else 0.0
+    LIGHT["lamp_off_at"] = 0.0 if on else time.time()
     return jsonify({"ok": True, "lamp": on, "override": CFG["lightOverride"]})
 
 
@@ -1340,10 +1389,12 @@ def api_light_override():
         set_lamp(True)
         LIGHT["lamp_since"] = time.time()
         LIGHT["lamp_on_at"] = time.time()
+        LIGHT["lamp_off_at"] = 0.0
     elif mode == "off":
         set_lamp(False)
         LIGHT["lamp_since"] = None
         LIGHT["lamp_on_at"] = 0.0
+        LIGHT["lamp_off_at"] = time.time()
     save_light_day()
     payload = light_today_payload()
     payload["ok"] = True

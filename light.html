@@ -270,16 +270,26 @@ function draw(data) {
   svg.innerHTML = parts.join("");
   svg._map = { start, span, x, pad, iw, W, data };
 }
+function lampStatus(data) {
+  if (data.statusLine) return data.statusLine;
+  const delta = Number(data.delta) || 0;
+  const mag = fmt(Math.abs(delta));
+  const signed = (delta >= 0 ? "+" : "−") + mag;
+  const lampS = data.lamp ? "lamp ON" : "lamp OFF";
+  const ov = data.override || "auto";
+  let why = "holding";
+  if (ov === "on") why = "forced on";
+  else if (ov === "off") why = "forced off";
+  else if (delta <= -0.3) why = "behind −0.3 threshold";
+  else if (delta >= 0.3) why = "caught up";
+  return signed + " · " + why + " · " + lampS;
+}
 function apply(data) {
-  const behind = data.delta < -0.03;
+  const behind = data.delta <= -0.3;
   document.getElementById("acc").innerHTML = fmt(data.accumulated) + "<span>sun-h</span>";
   const mag = fmt(Math.abs(data.delta));
-  const lampS = data.lamp ? "lamp ON" : "lamp OFF";
-  let line = "On pace · " + lampS;
-  if (data.delta < -0.03) line = "−" + mag + " behind expected · " + lampS;
-  else if (data.delta > 0.03) line = "+" + mag + " ahead of expected · " + lampS;
   const st = document.getElementById("status");
-  st.textContent = line;
+  st.textContent = lampStatus(data);
   st.className = "line " + (behind ? "behind" : "ahead");
   const lampTxt = data.lamp
     ? (data.lampSince ? ("ON since " + axisClock(data.lampSince)) : "ON")

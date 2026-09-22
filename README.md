@@ -141,11 +141,11 @@ The badge on the photo shows when the last still was taken. HDMI and phone/compu
 
 ## Soil moisture
 
-The Moisture bar on the phone/computer page still shows instantaneous %. Tap it to open `/moisture` — a **7-day** polyline of measured moisture (nights included), a dashed irrigate threshold, and pump marks. **Set air / Set water** live on that page only. Home keeps the 1-second Water button; `/moisture` has the same action (`POST /water`, same relay). HDMI keeps the bar, no chart.
+The Moisture bar on the phone/computer page still shows instantaneous %. Tap it to open `/moisture` — a **7-day** polyline of measured moisture (nights included), a dashed irrigate threshold, and pump marks. **Set air / Set water** live on that page only. Home keeps the 1-second Water button; `/moisture` has the same action (`POST /water`, same relay). HDMI shows the 7-day moisture chart (no camera).
 
 ## Today's light
 
-The Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a **24-hour** chart of accumulated sun-hours (Pacific midnight to midnight). **Actual** is sampled every **5 minutes** on the Pacific clock (`xx:00`, `xx:05`, `xx:10` …) from the photoresistor (or a labeled simulator if the Arduino is missing) and drawn as a smooth line through those points — not a copy of the expected curve. A late cycle uses the real elapsed seconds, then the grid resumes. Expected is a solar-shaped ramp 07:00–19:00. Auto lamp still follows that daytime window every second (sampling period ≠ lamp control). **Set dark / Set bright** on that page capture the current ADC as 0% and 100%. HDMI keeps the bar, no chart.
+The Light bar on the phone/computer page still shows instantaneous level. Tap it to open `/light` — a **24-hour** chart of accumulated sun-hours (Pacific midnight to midnight). **Actual** is sampled every **5 minutes** on the Pacific clock (`xx:00`, `xx:05`, `xx:10` …) from the photoresistor (or a labeled simulator if the Arduino is missing) and drawn as a smooth line through those points — not a copy of the expected curve. A late cycle uses the real elapsed seconds, then the grid resumes. Expected is a solar-shaped ramp 07:00–19:00. Auto lamp turns **on** only when daytime and actual is **0.3 sun-h behind** expected, **off** only when **0.3 ahead** or at night, and **holds** in between (5-minute min on and min off). **Set dark / Set bright** on that page capture the current ADC as 0% and 100%. HDMI shows today's light chart stacked with moisture (no camera).
 
 ## Calibrate moisture (this is what makes the % accurate)
 

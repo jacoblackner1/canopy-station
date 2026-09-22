@@ -129,6 +129,55 @@
   }
   body.kiosk .light-hint { display: none; }
   body.kiosk .meter-link { pointer-events: none; }
+  body.kiosk .cam { display: none !important; }
+  body.kiosk .hdmi-charts { display: flex; }
+  .hdmi-charts {
+    display: none;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px;
+    background: var(--bg);
+  }
+  .hdmi-charts section {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 6px 10px 4px;
+    box-shadow: 0 0 0 1px rgba(232,238,230,.08);
+    overflow: hidden;
+  }
+  .hdmi-charts .hdmi-num {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(22px, 5.2vh, 36px);
+    line-height: 1;
+    margin: 2px 0 0;
+    letter-spacing: -0.03em;
+  }
+  .hdmi-charts .hdmi-num span {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(12px, 2vh, 14px);
+    color: var(--muted);
+    margin-left: 6px;
+  }
+  .hdmi-charts .hdmi-why {
+    font-size: clamp(12px, 2.1vh, 15px);
+    margin: 4px 0 2px;
+    color: var(--ok);
+  }
+  .hdmi-charts .hdmi-why.behind { color: var(--alert); }
+  .hdmi-charts svg {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    height: auto;
+    display: block;
+  }
   .power {
     min-height: 40px; font-size: 13px; color: var(--muted);
     background: transparent;
@@ -163,13 +212,27 @@
     </div>
   </header>
   <div class="body">
-    <div class="cam">
+    <div class="cam" id="camPane">
       <img id="cam" src="/snapshot" alt="Station camera"/>
       <div class="scrim"></div>
       <div class="badge"><span class="dot"></span> <span id="snapLabel">Snapshot</span></div>
       <div class="flag pulse" id="pulse" hidden>Pulse</div>
       <div class="flag lamp" id="lampFlag" hidden>Lamp</div>
       <p class="plant" id="plant">—</p>
+    </div>
+    <div class="hdmi-charts" id="hdmiCharts" aria-label="Station charts">
+      <section>
+        <p class="k">Today's light</p>
+        <p class="hdmi-num" id="hdmiLightNum">—<span>sun-h</span></p>
+        <p class="hdmi-why" id="hdmiLightWhy">—</p>
+        <svg id="hdmiLight" viewBox="0 0 720 320" role="img" aria-label="Today's light"></svg>
+      </section>
+      <section>
+        <p class="k">Soil moisture</p>
+        <p class="hdmi-num" id="hdmiMoistNum">—<span>%</span></p>
+        <p class="hdmi-why" id="hdmiMoistWhy">—</p>
+        <svg id="hdmiMoist" viewBox="0 0 720 320" role="img" aria-label="7-day moisture"></svg>
+      </section>
     </div>
     <aside>
       <div>
@@ -215,6 +278,10 @@
 </div>
 <script>
 const KIOSK = document.body.classList.contains("kiosk");
+if (KIOSK) {
+  const cam0 = document.getElementById("cam");
+  if (cam0) cam0.removeAttribute("src");
+}
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -341,7 +408,7 @@ async function refresh() {
     }
     const cam = document.getElementById("cam");
     const snapLabel = document.getElementById("snapLabel");
-    if (s.snapshot_at) {
+    if (!KIOSK && s.snapshot_at) {
       const at = String(s.snapshot_at);
       if (cam && cam.dataset.at !== at) {
         cam.dataset.at = at;
@@ -354,7 +421,7 @@ async function refresh() {
           minute: "2-digit",
         });
       }
-    } else if (snapLabel) {
+    } else if (!KIOSK && snapLabel) {
       snapLabel.textContent = s.camera == null ? "No camera" : "Snapshot";
     }
   } catch (err) {
@@ -444,6 +511,180 @@ tickClock();
 refresh();
 setInterval(tickClock, 1000);
 setInterval(refresh, 1500);
+if (KIOSK) {
+  function polyPath(pts) {
+    if (!pts.length) return "";
+    return pts.map((s, i) => (i ? "L " : "M ") + s.split(",").map((n) => Number(n).toFixed(1)).join(" ")).join(" ");
+  }
+  function smoothPath(pts) {
+    if (!pts.length) return "";
+    if (pts.length === 1) return "M " + pts[0];
+    if (pts.length === 2) return "M " + pts[0] + " L " + pts[1];
+    const xy = pts.map((s) => s.split(",").map(Number));
+    let d = "M " + xy[0][0].toFixed(1) + " " + xy[0][1].toFixed(1);
+    for (let i = 0; i < xy.length - 1; i++) {
+      const p0 = xy[i - 1] || xy[i];
+      const p1 = xy[i];
+      const p2 = xy[i + 1];
+      const p3 = xy[i + 2] || p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+      const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+      const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += " C " + c1x.toFixed(1) + " " + c1y.toFixed(1) + " " + c2x.toFixed(1) + " " + c2y.toFixed(1) + " " + p2[0].toFixed(1) + " " + p2[1].toFixed(1);
+    }
+    return d;
+  }
+  function monotonePath(pts) {
+    if (!pts.length) return "";
+    const xy = pts.map((s) => s.split(",").map(Number));
+    const n = xy.length;
+    if (n === 1) return "M " + xy[0][0].toFixed(1) + " " + xy[0][1].toFixed(1);
+    if (n === 2) return "M " + xy[0][0].toFixed(1) + " " + xy[0][1].toFixed(1) + " L " + xy[1][0].toFixed(1) + " " + xy[1][1].toFixed(1);
+    const xs = xy.map((p) => p[0]);
+    const ys = xy.map((p) => p[1]);
+    const dx = [];
+    const m = [];
+    for (let i = 0; i < n - 1; i++) {
+      dx[i] = xs[i + 1] - xs[i];
+      m[i] = dx[i] === 0 ? 0 : (ys[i + 1] - ys[i]) / dx[i];
+    }
+    const t = new Array(n);
+    t[0] = m[0];
+    t[n - 1] = m[n - 2];
+    for (let i = 1; i < n - 1; i++) t[i] = m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (m[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+      const a = t[i] / m[i];
+      const b = t[i + 1] / m[i];
+      const s = a * a + b * b;
+      if (s > 9) {
+        const q = 3 / Math.sqrt(s);
+        t[i] = q * a * m[i];
+        t[i + 1] = q * b * m[i];
+      }
+    }
+    let d = "M " + xs[0].toFixed(1) + " " + ys[0].toFixed(1);
+    for (let i = 0; i < n - 1; i++) {
+      const c1x = xs[i] + dx[i] / 3;
+      const c1y = ys[i] + (t[i] * dx[i]) / 3;
+      const c2x = xs[i + 1] - dx[i] / 3;
+      const c2y = ys[i + 1] - (t[i + 1] * dx[i]) / 3;
+      d += " C " + c1x.toFixed(1) + " " + c1y.toFixed(1) + " " + c2x.toFixed(1) + " " + c2y.toFixed(1) + " " + xs[i + 1].toFixed(1) + " " + ys[i + 1].toFixed(1);
+    }
+    return d;
+  }
+  function axisClock(ms, isEnd) {
+    if (isEnd) return "24:00";
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles", hourCycle: "h23", hour: "2-digit", minute: "2-digit",
+    }).formatToParts(new Date(ms));
+    const h = parts.find((p) => p.type === "hour")?.value ?? "00";
+    const m = parts.find((p) => p.type === "minute")?.value ?? "00";
+    return String(Number(h) % 24) + ":" + m;
+  }
+  function weekTick(ms) {
+    return new Date(ms).toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: "short" });
+  }
+  function drawHdmiLight(data) {
+    const svg = document.getElementById("hdmiLight");
+    if (!svg || !data) return;
+    const pad = { l: 36, r: 14, t: 18, b: 24 };
+    const W = 720, H = 320, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const start = data.window.startMs, end = data.window.endMs;
+    const span = Math.max(1, end - start);
+    const target = data.target || 6;
+    const ymax = Math.max(target, data.accumulated || 0) * 1.08;
+    const x = (t) => pad.l + ((t - start) / span) * iw;
+    const y = (v) => pad.t + ih - (v / Math.max(0.01, ymax)) * ih;
+    const exp = data.expected || [];
+    const act = (data.actual || []).filter((p) => p.t <= data.now);
+    const last = act[act.length - 1];
+    const nowT = Math.min(Math.max(data.now, start), end);
+    const expPts = exp.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+    const actPts = act.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+    let gap = "";
+    if (last && exp.length && act.length > 1) {
+      const upto = exp.filter((p) => p.t <= last.t);
+      const fwd = upto.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+      const back = act.slice().reverse().map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+      gap = fwd.join(" ") + " " + back.join(" ");
+    }
+    const behind = data.delta <= -0.3;
+    const ticks = [0, .25, .5, .75, 1].map((f) => start + f * span);
+    const parts = [];
+    ticks.forEach((t, i) => {
+      parts.push(`<text x="${x(t)}" y="${H - 6}" text-anchor="middle" fill="#8a9386" font-size="12" font-family="ui-monospace,monospace">${axisClock(t, i === ticks.length - 1)}</text>`);
+    });
+    if (gap) parts.push(`<polygon points="${gap}" fill="${behind ? "#c47a6a" : "#8fba8a"}" opacity="0.22"/>`);
+    if (expPts.length) parts.push(`<path d="${smoothPath(expPts)}" fill="none" stroke="#8a9386" stroke-width="1.5" stroke-dasharray="5 5"/>`);
+    if (actPts.length) parts.push(`<path d="${monotonePath(actPts)}" fill="none" stroke="#c4a574" stroke-width="2.6" stroke-linejoin="round"/>`);
+    parts.push(`<line x1="${x(nowT)}" x2="${x(nowT)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="#e8eee6" stroke-width="1" opacity="0.4"/>`);
+    if (last) parts.push(`<circle cx="${x(last.t)}" cy="${y(last.v)}" r="4.5" fill="#c4a574"/>`);
+    svg.innerHTML = parts.join("");
+    const numEl = document.getElementById("hdmiLightNum");
+    if (numEl) numEl.innerHTML = Number(data.accumulated || 0).toFixed(1) + "<span>sun-h</span>";
+    const why = document.getElementById("hdmiLightWhy");
+    if (why) {
+      why.textContent = data.statusLine || "";
+      why.className = "hdmi-why" + (behind ? " behind" : "");
+    }
+  }
+  function drawHdmiMoist(data) {
+    const svg = document.getElementById("hdmiMoist");
+    if (!svg || !data) return;
+    const pad = { l: 36, r: 14, t: 18, b: 24 };
+    const W = 720, H = 320, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const start = data.window.startMs, end = data.window.endMs;
+    const span = Math.max(1, end - start);
+    const ymax = 100;
+    const x = (t) => pad.l + ((t - start) / span) * iw;
+    const y = (v) => pad.t + ih - (v / ymax) * ih;
+    const samples = (data.samples || []).filter((p) => p.t <= data.now && p.pump_event !== "start");
+    const pumps = (data.samples || []).filter((p) => p.pump_event === "start" && p.t <= data.now);
+    const last = samples[samples.length - 1];
+    const nowT = Math.min(Math.max(data.now, start), end);
+    const actPts = samples.map((p) => x(p.t).toFixed(1) + "," + y(p.v).toFixed(1));
+    const under = last && samples.length
+      ? x(samples[0].t).toFixed(1) + "," + y(0).toFixed(1) + " " + actPts.join(" ") + " " + x(last.t).toFixed(1) + "," + y(0).toFixed(1)
+      : "";
+    const ticks = [];
+    for (let t = start; t <= end + 60000; t += 24 * 3600 * 1000) ticks.push(Math.min(t, end));
+    const parts = [];
+    ticks.forEach((t) => {
+      parts.push(`<text x="${x(t)}" y="${H - 6}" text-anchor="middle" fill="#8a9386" font-size="12" font-family="ui-monospace,monospace">${weekTick(t)}</text>`);
+    });
+    if (under) parts.push(`<polygon points="${under}" fill="#9cba8b" opacity="0.1"/>`);
+    parts.push(`<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(data.threshold || 40)}" y2="${y(data.threshold || 40)}" stroke="#8a9386" stroke-width="1.5" stroke-dasharray="5 5"/>`);
+    if (actPts.length) parts.push(`<path d="${polyPath(actPts)}" fill="none" stroke="#9cba8b" stroke-width="2.4" stroke-linejoin="round"/>`);
+    pumps.forEach((p) => {
+      parts.push(`<line x1="${x(p.t)}" x2="${x(p.t)}" y1="${y(0)}" y2="${y(p.v)}" stroke="#c4a574" stroke-width="1" opacity="0.55"/>`);
+      parts.push(`<circle cx="${x(p.t)}" cy="${y(p.v)}" r="3.5" fill="#c4a574"/>`);
+    });
+    parts.push(`<line x1="${x(nowT)}" x2="${x(nowT)}" y1="${pad.t}" y2="${pad.t + ih}" stroke="#e8eee6" stroke-width="1" opacity="0.4"/>`);
+    svg.innerHTML = parts.join("");
+    const numEl = document.getElementById("hdmiMoistNum");
+    if (numEl) numEl.innerHTML = Number(data.current || 0).toFixed(1) + "<span>%</span>";
+    const why = document.getElementById("hdmiMoistWhy");
+    if (why) {
+      const below = data.current < (data.threshold || 40) - 0.3;
+      why.textContent = data.pump ? "Pump on" : (below ? "below target" : "In range");
+      why.className = "hdmi-why" + (below ? " behind" : "");
+    }
+  }
+  async function loadHdmiCharts() {
+    try {
+      const [lightRes, moistRes] = await Promise.all([
+        fetch("/api/light/today", { cache: "no-store" }),
+        fetch("/api/moisture/week", { cache: "no-store" }),
+      ]);
+      drawHdmiLight(await lightRes.json());
+      drawHdmiMoist(await moistRes.json());
+    } catch (err) { /* keep last frame */ }
+  }
+  loadHdmiCharts();
+  setInterval(loadHdmiCharts, 5000);
+}
 </script>
 </body>
 </html>
