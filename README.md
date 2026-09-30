@@ -53,7 +53,7 @@ cd ~/canopy-station
 ./scripts/start_kiosk.sh
 ```
 
-Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — full screen, with Water and Lamp. Tap **Moisture** for the 7-day chart, Set air / Set water, and another Water 1s. Tap **Light** for today’s light. HDMI is stats only.
+Dashboard is at `http://<pi-lan-ip>:5000/` on a phone or computer — **Grove** lists every plant. **Open** a card for the snapshot, Water 1s, and Lamp. Tap moisture or light there for the same history pages as before. HDMI stays charts only.
 
 **Remote access** (optional): Cloudflare Tunnel + Access, no router port-forward. Same UI after email OTP. See [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md).
 

@@ -114,6 +114,16 @@
   .plants {
     display: flex; flex-direction: row; gap: 8px; width: 100%;
   }
+  .pick-wrap {
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .pick-wrap select {
+    min-height: 44px; border-radius: 999px; border: 0;
+    background: var(--surface-2); color: var(--fg);
+    padding: 0 12px; font: 500 14px "Segoe UI", system-ui, sans-serif;
+    text-transform: none; letter-spacing: 0;
+  }
   .plants button.on {
     background: var(--primary); color: var(--primary-fg);
     box-shadow: none;
@@ -265,6 +275,9 @@
         </div>
         <p class="next" id="next">Auto --:--</p>
         <p class="raw" id="raw">sensors —</p>
+        <label class="controls pick-wrap" for="plantPick">Plant
+          <select id="plantPick"></select>
+        </label>
         <div class="plants controls" id="plants">
           <button type="button" data-plant="lush">Lush</button>
           <button type="button" data-plant="standard">Standard</button>
@@ -412,6 +425,7 @@ async function refresh() {
         ? "CPU -- °C"
         : ("CPU " + Number(s.cpu_temp).toFixed(1) + " °C");
     }
+    fillPlantPick(s);
     const cam = document.getElementById("cam");
     const snapLabel = document.getElementById("snapLabel");
     if (!KIOSK && s.snapshot_at) {
@@ -445,6 +459,22 @@ async function calibrate(kind) {
   rawEl.textContent = kind + " = " + s.raw;
   refresh();
 }
+function fillPlantPick(s) {
+  const pick = document.getElementById("plantPick");
+  if (!pick || !s.plants || !s.plants.length) return;
+  const ids = s.plants.map((p) => p.id).join("|");
+  if (pick.dataset.ids !== ids) {
+    pick.dataset.ids = ids;
+    pick.replaceChildren();
+    s.plants.forEach((p) => {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = p.name;
+      pick.appendChild(o);
+    });
+  }
+  if (s.active_plant) pick.value = s.active_plant;
+}
 if (!KIOSK) {
   document.getElementById("water").onclick = () => fetch("/water", {
     method: "POST",
@@ -452,6 +482,17 @@ if (!KIOSK) {
     body: JSON.stringify({ source: "home" }),
   });
   document.getElementById("lamp").onclick = () => fetch("/light", { method: "POST" });
+  const pick = document.getElementById("plantPick");
+  if (pick) {
+    pick.onchange = async () => {
+      await fetch("/api/plants/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pick.value }),
+      });
+      refresh();
+    };
+  }
   document.querySelectorAll("#plants [data-plant]").forEach((b) => {
     b.onclick = async () => {
       const id = b.getAttribute("data-plant");

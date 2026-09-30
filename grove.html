@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Canopy</title>
+<style>
+  :root {
+    --bg: #0c0f0c; --surface: #151a15; --surface-2: #1c231c;
+    --fg: #e8eee6; --muted: #8a9386; --primary: #9cba8b; --ok: #8fba8a; --warn: #c4a574;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  header, main { padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; background: var(--surface); }
+  .brand { font-family: Georgia, serif; margin: 0; font-size: 20px; }
+  .meta { font-family: ui-monospace, monospace; color: var(--muted); font-size: 12px; }
+  h1 { font-family: Georgia, serif; font-weight: 500; font-size: 32px; margin: 0 0 12px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 720px) { .grid { grid-template-columns: 1fr 1fr; } }
+  article, .add {
+    background: var(--surface); border-radius: 16px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(232,238,230,.08);
+  }
+  .shot { height: 140px; background: var(--surface-2); position: relative; }
+  .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .badge {
+    position: absolute; left: 8px; top: 8px; background: rgba(12,15,12,.7);
+    font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+    padding: 4px 8px; border-radius: 6px;
+  }
+  .pad { padding: 12px; }
+  .name { font-family: Georgia, serif; margin: 0 0 8px; font-size: 20px; }
+  .chip { display: inline-block; font-size: 12px; border-radius: 99px; padding: 2px 8px; margin-bottom: 8px; }
+  .chip.ok { color: var(--ok); background: rgba(143,186,138,.15); }
+  .chip.warn { color: var(--warn); background: rgba(196,165,116,.15); }
+  .chip.muted { color: var(--muted); }
+  .bar { height: 4px; border-radius: 99px; background: var(--surface-2); margin: 4px 0 8px; }
+  .bar i { display: block; height: 100%; background: var(--primary); border-radius: 99px; }
+  .row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  a.open { color: var(--primary); text-decoration: none; display: inline-flex; min-height: 44px; align-items: center; }
+  .add {
+    min-height: 200px; border: 1px dashed rgba(156,186,139,.6); background: transparent;
+    color: var(--fg); width: 100%; font: inherit; cursor: pointer;
+  }
+  dialog { width: min(440px, 100%); border: 0; border-radius: 16px; background: var(--surface); color: var(--fg); padding: 16px; }
+  dialog::backdrop { background: rgba(12,15,12,.72); }
+  label { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 12px; }
+  input, select, button.chipbtn {
+    margin-top: 6px; min-height: 44px; border-radius: 999px; border: 0;
+    background: var(--surface-2); color: var(--fg); font: inherit;
+  }
+  input, select { width: 100%; padding: 0 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  button.chipbtn { padding: 0 12px; cursor: pointer; }
+  button.chipbtn.on { background: var(--primary); color: #0c0f0c; }
+  .go, .cancel {
+    width: 100%; min-height: 48px; border-radius: 999px; border: 0; margin-top: 12px;
+    font: 500 16px inherit; cursor: pointer;
+  }
+  .go { background: var(--primary); color: #0c0f0c; }
+  .cancel { background: transparent; color: var(--fg); box-shadow: 0 0 0 1px rgba(232,238,230,.14); }
+  .note { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <p class="brand">Canopy</p>
+  <p class="meta" id="meta">CPU -- °C</p>
+</header>
+<main>
+  <h1>All plants</h1>
+  <div class="grid" id="grid"></div>
+</main>
+<dialog id="sheet">
+  <form method="dialog" id="form">
+    <h2>Add plant</h2>
+    <label>Plant name
+      <input id="name" maxlength="40" placeholder="e.g. Window Herb Bed" required/>
+    </label>
+    <label>Profile preset
+      <select id="profile">
+        <option value="lush">Lush</option>
+        <option value="standard" selected>Standard</option>
+        <option value="succulent">Succulent</option>
+      </select>
+    </label>
+    <p class="note">Optional suite · attach to Orange Pi</p>
+    <div class="chips" id="chips"></div>
+    <p class="note">Shares the station sensors. Does not start another camera.</p>
+    <button class="go" id="create" type="submit">Create plant</button>
+    <button class="cancel" type="button" id="cancel">Cancel</button>
+  </form>
+</dialog>
+<script>
+const SUITES = [
+  ["camera", "Camera"],
+  ["moistureLight", "Moisture+Light"],
+  ["pump", "Pump"],
+];
+const chosen = new Set();
+const chips = document.getElementById("chips");
+SUITES.forEach(([id, label]) => {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "chipbtn";
+  b.textContent = label;
+  b.onclick = () => {
+    if (chosen.has(id)) chosen.delete(id); else chosen.add(id);
+    b.classList.toggle("on", chosen.has(id));
+  };
+  chips.appendChild(b);
+});
+const sheet = document.getElementById("sheet");
+document.getElementById("cancel").onclick = () => sheet.close();
+document.getElementById("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("name").value.trim();
+  if (!name) return;
+  await fetch("/api/plants", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      profile: document.getElementById("profile").value,
+      suites: [...chosen],
+    }),
+  });
+  sheet.close();
+  refresh();
+};
+function bar(label, value) {
+  const wrap = document.createElement("div");
+  const row = document.createElement("div");
+  row.className = "row";
+  const a = document.createElement("span");
+  a.textContent = label;
+  const b = document.createElement("span");
+  b.textContent = Math.round(value) + "%";
+  row.append(a, b);
+  const track = document.createElement("div");
+  track.className = "bar";
+  const fill = document.createElement("i");
+  fill.style.width = Math.max(2, Math.min(100, value)) + "%";
+  track.appendChild(fill);
+  wrap.append(row, track);
+  return wrap;
+}
+let lastSnap = "";
+async function refresh() {
+  if (document.hidden) return;
+  let s;
+  try {
+    s = await (await fetch("/status", { cache: "no-store" })).json();
+  } catch (err) {
+    return;
+  }
+  const meta = document.getElementById("meta");
+  const cpu = s.cpu_temp == null ? "CPU -- °C" : ("CPU " + Number(s.cpu_temp).toFixed(1) + " °C");
+  meta.textContent = cpu + "  " + new Date().toLocaleTimeString();
+  const grid = document.getElementById("grid");
+  grid.replaceChildren();
+  const plants = s.plants || [];
+  const snap = String(s.snapshot_at || "");
+  plants.forEach((p) => {
+    const card = document.createElement("article");
+    const shot = document.createElement("div");
+    shot.className = "shot";
+    const suites = p.suites || [];
+    if (suites.includes("camera")) {
+      const img = document.createElement("img");
+      img.alt = "";
+      if (snap && snap !== "0") {
+        img.src = "/snapshot?t=" + encodeURIComponent(snap);
+        lastSnap = snap;
+      }
+      img.onerror = () => { img.replaceWith(document.createTextNode("")); };
+      shot.appendChild(img);
+    }
+    const badge = document.createElement("div");
+    badge.className = "badge";
+    badge.textContent = "Snapshot";
+    shot.appendChild(badge);
+    const pad = document.createElement("div");
+    pad.className = "pad";
+    const name = document.createElement("h2");
+    name.className = "name";
+    name.textContent = p.name;
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    const live = suites.includes("moistureLight");
+    const low = p.profile === "lush" ? 45 : p.profile === "succulent" ? 20 : 40;
+    const high = p.profile === "lush" ? 75 : p.profile === "succulent" ? 50 : 70;
+    if (!live) {
+      chip.textContent = "No probe";
+      chip.classList.add("muted");
+    } else if (s.moisture < low || s.moisture > high) {
+      chip.textContent = s.moisture < low ? "Needs water" : "Too wet";
+      chip.classList.add("warn");
+    } else {
+      chip.textContent = "In range";
+      chip.classList.add("ok");
+    }
+    pad.append(name, chip);
+    if (live) {
+      pad.append(bar("Moisture", s.moisture), bar("Light", s.light));
+    } else {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "Moisture and light not attached";
+      pad.appendChild(note);
+    }
+    const open = document.createElement("a");
+    open.className = "open";
+    open.href = "/focus";
+    open.textContent = "Open";
+    open.onclick = (ev) => {
+      ev.preventDefault();
+      fetch("/api/plants/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: p.id }),
+      }).finally(() => { location.href = "/focus"; });
+    };
+    pad.appendChild(open);
+    card.append(shot, pad);
+    grid.appendChild(card);
+  });
+  const add = document.createElement("button");
+  add.className = "add";
+  add.type = "button";
+  add.textContent = "Add plant";
+  add.onclick = () => sheet.showModal();
+  grid.appendChild(add);
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

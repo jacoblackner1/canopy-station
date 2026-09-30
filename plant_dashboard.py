@@ -33,6 +33,7 @@ CFG_PATH = ROOT / "station.json"
 KIND_PATH = ROOT / "plant.kind"
 LIGHT_PATH = ROOT / "light-today.json"
 MOISTURE_PATH = ROOT / "moisture-week.json"
+PLANTS_PATH = ROOT / "plants.json"
 STATION_TZ = ZoneInfo("America/Los_Angeles")
 
 # 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
@@ -1238,6 +1239,74 @@ def auto_loop() -> None:
             threading.Thread(target=water_pulse, args=("auto",), daemon=True).start()
 
 
+PLANT_SUITES = ("camera", "moistureLight", "pump")
+PLANTS: dict = {"activeId": "", "plants": []}
+
+
+def _default_plants() -> dict:
+    profile = current_profile()
+    return {
+        "activeId": "station",
+        "plants": [
+            {
+                "id": "station",
+                "name": profile["label"],
+                "profile": profile["id"],
+                "suites": ["camera", "moistureLight", "pump"],
+            }
+        ],
+    }
+
+
+def save_plants() -> None:
+    try:
+        PLANTS_PATH.write_text(json.dumps(PLANTS, indent=2) + "\n")
+    except OSError as exc:
+        print(f"plants save failed: {exc}", flush=True)
+
+
+def load_plants() -> dict:
+    """In-memory after the first read. No extra thread."""
+    global PLANTS
+    if PLANTS.get("plants"):
+        return PLANTS
+    if PLANTS_PATH.exists():
+        try:
+            data = json.loads(PLANTS_PATH.read_text())
+            plants = []
+            for row in data.get("plants") or []:
+                if not isinstance(row, dict):
+                    continue
+                pid = str(row.get("id") or "").strip()
+                name = str(row.get("name") or "").strip()[:40]
+                if not pid or not name:
+                    continue
+                profile = profile_by_id(row.get("profile"))
+                suites = [s for s in (row.get("suites") or []) if s in PLANT_SUITES]
+                plants.append(
+                    {"id": pid, "name": name, "profile": profile["id"], "suites": suites}
+                )
+            if plants:
+                active = str(data.get("activeId") or "")
+                if not any(p["id"] == active for p in plants):
+                    active = plants[0]["id"]
+                PLANTS = {"activeId": active, "plants": plants}
+                return PLANTS
+        except Exception:
+            pass
+    PLANTS = _default_plants()
+    save_plants()
+    return PLANTS
+
+
+def active_plant() -> dict:
+    data = load_plants()
+    for plant in data["plants"]:
+        if plant["id"] == data["activeId"]:
+            return plant
+    return data["plants"][0]
+
+
 app = Flask(__name__)
 
 
@@ -1267,11 +1336,25 @@ def _local_hdmi() -> bool:
     return host in ("127.0.0.1", "localhost", "::1")
 
 
+def grove_page():
+    path = ROOT / "grove.html"
+    html = path.read_text() if path.exists() else "Grove missing"
+    resp = make_response(html)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/")
 def home():
-    # HDMI kiosk often lands on / not /kiosk. Localhost → charts, LAN → camera.
+    # HDMI Chromium on localhost still gets charts. Phones get Grove.
     if _local_hdmi():
         return load_page("kiosk")
+    return grove_page()
+
+
+@app.get("/focus")
+def focus_page():
+    """Existing single-plant page. Moisture and light links stay as they are."""
     return load_page("full")
 
 
@@ -1332,6 +1415,8 @@ def status():
             "light_expected": expected_now,
             "light_delta": acc - expected_now,
             "light_override": CFG.get("lightOverride") or "auto",
+            "plants": load_plants()["plants"],
+            "active_plant": load_plants()["activeId"],
         }
     )
 
@@ -1500,12 +1585,63 @@ def calibrate(kind: str):
     })
 
 
+@app.post("/api/plants")
+def create_plant():
+    body = request.get_json(silent=True) or {}
+    name = str(body.get("name") or "").strip()[:40]
+    if not name:
+        return jsonify({"ok": False, "error": "name required"}), 400
+    profile = profile_by_id(body.get("profile"))
+    suites = [s for s in (body.get("suites") or []) if s in PLANT_SUITES]
+    data = load_plants()
+    plant = {
+        "id": "p" + str(int(time.time())),
+        "name": name,
+        "profile": profile["id"],
+        "suites": suites,
+    }
+    data["plants"].append(plant)
+    data["activeId"] = plant["id"]
+    write_kind(profile["id"])
+    save_plants()
+    refresh_status()
+    return jsonify({"ok": True, "plant": plant, "plants": data["plants"], "active_plant": plant["id"]})
+
+
+@app.post("/api/plants/select")
+def select_plant():
+    body = request.get_json(silent=True) or {}
+    pid = str(body.get("id") or "").strip()
+    data = load_plants()
+    plant = next((p for p in data["plants"] if p["id"] == pid), None)
+    if plant is None:
+        return jsonify({"ok": False, "error": "unknown plant"}), 404
+    data["activeId"] = plant["id"]
+    write_kind(plant["profile"])
+    save_plants()
+    refresh_status()
+    return jsonify(
+        {
+            "ok": True,
+            "active_plant": plant["id"],
+            "plant_id": plant["profile"],
+            "profile": profile_by_id(plant["profile"])["label"],
+        }
+    )
+
+
 @app.post("/plant/<kind>")
 def set_plant(kind: str):
     profile = profile_by_id(kind)
     if str(kind or "").strip().lower() != profile["id"]:
         return jsonify({"ok": False, "error": "unknown plant"}), 400
     write_kind(profile["id"])
+    data = load_plants()
+    for plant in data["plants"]:
+        if plant["id"] == data["activeId"]:
+            plant["profile"] = profile["id"]
+            break
+    save_plants()
     refresh_status()
     print(f"plant {profile['id']} moisture {profile['low']}-{profile['high']}%", flush=True)
     return jsonify(
@@ -1563,7 +1699,7 @@ def poweroff():
 
 @app.after_request
 def no_store(resp):
-    if request.path in ("/status", "/", "/kiosk", "/light", "/api/light/today", "/snapshot", "/video"):
+    if request.path in ("/status", "/", "/kiosk", "/focus", "/light", "/api/light/today", "/snapshot", "/video"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
