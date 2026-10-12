@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 import cv2
 import numpy as np
 import serial
+from watering_safety import DEFAULT_LIMITS, WateringGuard
 from flask import Flask, Response, jsonify, make_response, request
 
 ROOT = Path(__file__).resolve().parent
@@ -34,6 +35,7 @@ KIND_PATH = ROOT / "plant.kind"
 LIGHT_PATH = ROOT / "light-today.json"
 MOISTURE_PATH = ROOT / "moisture-week.json"
 PLANTS_PATH = ROOT / "plants.json"
+WATER_STATE_PATH = ROOT / "watering-state.json"
 STATION_TZ = ZoneInfo("America/Los_Angeles")
 
 # 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
@@ -57,6 +59,7 @@ DEFAULTS = {
     "flaskHost": "0.0.0.0",
     "flaskPort": 5000,
     "plantKind": "standard",
+    **DEFAULT_LIMITS,
 }
 
 PROFILES = (
@@ -94,6 +97,7 @@ def save_cfg(cfg: dict) -> None:
 
 
 CFG = load_cfg()
+GUARD = WateringGuard.load(WATER_STATE_PATH, CFG)
 CFG_MTIME = CFG_PATH.stat().st_mtime if CFG_PATH.exists() else 0.0
 LOCK = threading.Lock()
 SER = None
@@ -121,6 +125,7 @@ STATE = {
     "sensors_ok": False,
     "lamp_delta": 0,
     "arduino_fault": 0,
+    "water_block": None,
 }
 
 # Learned when the lamp toggles: analog jump that is electrical, not soil.
@@ -234,6 +239,7 @@ def maybe_reload_cfg() -> None:
     CFG_MTIME = mtime
     CFG = load_cfg()
     CFG["plantKind"] = read_kind()
+    GUARD.update_limits(CFG)
     print(
         f"reloaded station.json dry {CFG['moistureDry']} wet {CFG['moistureWet']} "
         f"dark {CFG['lightDark']} day {CFG['lightDay']} plant {CFG.get('plantKind')}",
@@ -991,7 +997,7 @@ def parse_fault(line: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def heartbeat_loop() -> None:
+def heartbeat_loop() -> bool:
     """Ping the Nano ~1/s so its pump watchdog knows the Pi is alive."""
     while True:
         if SER is not None:
@@ -999,12 +1005,19 @@ def heartbeat_loop() -> None:
         time.sleep(1.0)
 
 
-def water_pulse(source: str = "home") -> None:
+def water_pulse(source: str = "home") -> bool:
     duration_ms = int(CFG.get("waterPulseMs") or 1000)
     with LOCK:
         if STATE["pump"]:
-            return
+            return False
+        ok, why = GUARD.check(duration_ms, source)
+        if not ok:
+            STATE["water_block"] = why
+            print(f"water pulse blocked ({source}): {why}", flush=True)
+            return False
+        STATE["water_block"] = None
         STATE["pump"] = True
+        GUARD.record_pulse(duration_ms, source, float(STATE["moisture"]))
     if source not in ("home", "moisture", "auto"):
         source = "home"
     append_moisture_sample(
@@ -1026,6 +1039,7 @@ def water_pulse(source: str = "home") -> None:
         source=source,
         duration_ms=duration_ms,
     )
+    return True
 
 
 def set_lamp(on: bool) -> None:
@@ -1146,6 +1160,7 @@ def serial_loop() -> None:
                         prev_fault = STATE.get("arduino_fault", 0)
                         STATE["arduino_fault"] = fcode
                     if fcode and fcode != prev_fault:
+                        GUARD.trip(f"Arduino pump fault {fcode}: {PUMP_FAULTS.get(fcode, 'unknown')}")
                         print(
                             f"ARDUINO PUMP FAULT {fcode}: {PUMP_FAULTS.get(fcode, 'unknown')} "
                             "- pump locked until RESET_FAULT",
@@ -1161,6 +1176,12 @@ def serial_loop() -> None:
                 with LOCK:
                     pumping = bool(STATE["pump"])
                     prev_raw = STATE["moisture_raw"]
+                    pct_now = float(STATE["moisture"])
+                bad = GUARD.observe_reading(
+                    m_raw, pct_now, int(CFG["moistureDry"]), pumping=pumping
+                )
+                if bad:
+                    print(f"WATERING LOCKOUT: {bad}", flush=True)
                 if pumping and prev_raw is not None:
                     m_used = prev_raw
                 else:
@@ -1441,6 +1462,8 @@ def status():
             "moisture_wet": CFG["moistureWet"],
             "lamp_delta": int(s.get("lamp_delta") or 0),
             "arduino_fault": int(s.get("arduino_fault") or 0),
+            "water_block": s.get("water_block"),
+            "watering": GUARD.status(),
             "cpu_temp": cpu_temp_c(),
             "app": "plant-select",
             "light_acc": acc,
@@ -1469,6 +1492,17 @@ def pump_reset_fault():
     with LOCK:
         STATE["arduino_fault"] = 0
     return jsonify({"ok": True})
+@app.post("/pump/reset")
+def pump_reset():
+    """Manual reset after Jacob checks the probe/reservoir. Clears lockout only;
+    daily caps still apply."""
+    GUARD.reset()
+    send("RESET_FAULT")
+    with LOCK:
+        STATE["water_block"] = None
+        STATE["arduino_fault"] = 0
+    print("watering lockout reset by user", flush=True)
+    return jsonify({"ok": True, "watering": GUARD.status()})
 
 
 @app.post("/light")
