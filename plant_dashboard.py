@@ -5,7 +5,7 @@
 Pump relay is inverted: HIGH = on. Default OFF at start.
 
 Moisture/light use the Nano analogRead scale (0–1023). Calibrate in
-station.json: probe in air → moistureDry, probe in water → moistureWet.
+station.local.json (per-unit, untracked): probe in air → moistureDry, probe in water → moistureWet.
 Capacitive probes read HIGH when dry and LOW when wet.
 """
 
@@ -30,7 +30,12 @@ from watering_safety import DEFAULT_LIMITS, WateringGuard
 from flask import Flask, Response, jsonify, make_response, request
 
 ROOT = Path(__file__).resolve().parent
-CFG_PATH = ROOT / "station.json"
+# station.example.json: tracked shared defaults (edit in git).
+# station.local.json:   untracked per-unit calibration/overrides (kiosk writes here).
+# station.json:         legacy per-unit file; migrated into station.local.json once.
+CFG_EXAMPLE_PATH = ROOT / "station.example.json"
+CFG_PATH = ROOT / "station.local.json"
+LEGACY_CFG_PATH = ROOT / "station.json"
 KIND_PATH = ROOT / "plant.kind"
 LIGHT_PATH = ROOT / "light-today.json"
 MOISTURE_PATH = ROOT / "moisture-week.json"
@@ -38,7 +43,7 @@ PLANTS_PATH = ROOT / "plants.json"
 WATER_STATE_PATH = ROOT / "watering-state.json"
 STATION_TZ = ZoneInfo("America/Los_Angeles")
 
-# 10-bit analogRead defaults. Replace via kiosk Air/Water or station.json.
+# 10-bit analogRead defaults. Replace via kiosk Air/Water or station.local.json.
 # Typical capacitive: air ~550–700, water ~220–320.
 DEFAULTS = {
     "moistureDry": 600,
@@ -75,27 +80,49 @@ LINE_RE = re.compile(
 PAIR_RE = re.compile(r"(-?\d+(?:\.\d+)?)\s*[|:,]\s*(-?\d+(?:\.\d+)?)")
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def migrate_legacy_cfg() -> None:
+    """One-time: copy an old per-unit station.json into station.local.json."""
+    if CFG_PATH.exists() or not LEGACY_CFG_PATH.exists():
+        return
+    legacy = _read_json(LEGACY_CFG_PATH)
+    if not legacy:
+        return
+    CFG_PATH.write_text(json.dumps(legacy, indent=2) + "\n")
+    print(f"migrated {LEGACY_CFG_PATH.name} -> {CFG_PATH.name}", flush=True)
+
+
 def load_cfg() -> dict:
     cfg = dict(DEFAULTS)
-    if CFG_PATH.exists():
-        try:
-            cfg.update(json.loads(CFG_PATH.read_text()))
-        except Exception:
-            pass
+    cfg.update(_read_json(CFG_EXAMPLE_PATH))
+    cfg.update(_read_json(CFG_PATH))
     return cfg
 
 
 def save_cfg(cfg: dict) -> None:
+    """Write only values that differ from shared defaults, so a git pull that
+    changes station.example.json still reaches units that never touched them."""
     global CFG_MTIME
-    out = dict(DEFAULTS)
-    out.update(cfg)
-    CFG_PATH.write_text(json.dumps(out, indent=2) + "\n")
+    base = dict(DEFAULTS)
+    base.update(_read_json(CFG_EXAMPLE_PATH))
+    out = {k: v for k, v in cfg.items() if base.get(k) != v}
+    tmp = CFG_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, CFG_PATH)
     try:
         CFG_MTIME = CFG_PATH.stat().st_mtime
     except OSError:
         pass
 
 
+migrate_legacy_cfg()
 CFG = load_cfg()
 GUARD = WateringGuard.load(WATER_STATE_PATH, CFG)
 CFG_MTIME = CFG_PATH.stat().st_mtime if CFG_PATH.exists() else 0.0
@@ -241,7 +268,7 @@ def maybe_reload_cfg() -> None:
     CFG["plantKind"] = read_kind()
     GUARD.update_limits(CFG)
     print(
-        f"reloaded station.json dry {CFG['moistureDry']} wet {CFG['moistureWet']} "
+        f"reloaded config dry {CFG['moistureDry']} wet {CFG['moistureWet']} "
         f"dark {CFG['lightDark']} day {CFG['lightDay']} plant {CFG.get('plantKind')}",
         flush=True,
     )
