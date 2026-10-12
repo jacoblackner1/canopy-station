@@ -13,3 +13,5 @@ plant.kind
 light-today.json
 moisture-week.json
 watering-state.json
+station.local.json
+station.local.json.tmp

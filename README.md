@@ -135,7 +135,7 @@ Then hard-refresh the phone/computer page. HDMI has no picker. If the type snaps
 
 ## Camera snapshot
 
-The phone/computer page shows a **still**, not a live stream. A new frame is taken on the same tick as auto-water (default **5 minutes**, `autoSeconds` in `station.json`). Green / yellow meters come from that still. Between ticks the USB camera is closed so the Pi is not encoding video all day.
+The phone/computer page shows a **still**, not a live stream. A new frame is taken on the same tick as auto-water (default **5 minutes**, `autoSeconds` in `station.local.json`). Green / yellow meters come from that still. Between ticks the USB camera is closed so the Pi is not encoding video all day.
 
 The badge on the photo shows when the last still was taken. HDMI does not show the camera — that slot is the two charts.
 
@@ -161,7 +161,7 @@ Your old `49 / 21` values were on a 0–100 scale, so a real reading of ~497 loo
 2. Dunk the probe in a **glass of water** for 5 seconds. Tap **Set water**.
 3. Put the probe back in the pot. Moisture should sit somewhere between 0% and 100%.
 
-**Or edit `station.json`:**
+**Or edit `station.local.json`** (per-unit, not in git; shared defaults live in `station.example.json`):
 
 ```json
 "moistureDry": 600,
