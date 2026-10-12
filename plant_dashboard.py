@@ -120,6 +120,7 @@ STATE = {
     "last_line": "",
     "sensors_ok": False,
     "lamp_delta": 0,
+    "arduino_fault": 0,
 }
 
 # Learned when the lamp toggles: analog jump that is electrical, not soil.
@@ -981,6 +982,23 @@ def send(cmd: str) -> None:
         print(f"serial write failed: {exc}", flush=True)
 
 
+PUMP_FAULTS = {0: None, 1: "max on-time hit", 2: "heartbeat lost", 3: "watchdog reset"}
+FAULT_RE = re.compile(r"FAULT:(\d+)", re.IGNORECASE)
+
+
+def parse_fault(line: str) -> int | None:
+    m = FAULT_RE.search(line or "")
+    return int(m.group(1)) if m else None
+
+
+def heartbeat_loop() -> None:
+    """Ping the Nano ~1/s so its pump watchdog knows the Pi is alive."""
+    while True:
+        if SER is not None:
+            send("PING")
+        time.sleep(1.0)
+
+
 def water_pulse(source: str = "home") -> None:
     duration_ms = int(CFG.get("waterPulseMs") or 1000)
     with LOCK:
@@ -995,7 +1013,9 @@ def water_pulse(source: str = "home") -> None:
         source=source,
         duration_ms=duration_ms,
     )
-    send("WATER_ON")
+    # The Nano times the pulse itself (WATER_MS) and also enforces a hard
+    # ceiling + heartbeat, so a Pi crash here can't leave the pump running.
+    send(f"WATER_MS:{duration_ms}")
     time.sleep(max(0.2, duration_ms / 1000.0))
     send("WATER_OFF")
     with LOCK:
@@ -1120,6 +1140,17 @@ def serial_loop() -> None:
                 silent_since = time.time()
                 with LOCK:
                     STATE["last_line"] = raw[:80]
+                fcode = parse_fault(raw)
+                if fcode is not None:
+                    with LOCK:
+                        prev_fault = STATE.get("arduino_fault", 0)
+                        STATE["arduino_fault"] = fcode
+                    if fcode and fcode != prev_fault:
+                        print(
+                            f"ARDUINO PUMP FAULT {fcode}: {PUMP_FAULTS.get(fcode, 'unknown')} "
+                            "- pump locked until RESET_FAULT",
+                            flush=True,
+                        )
                 parsed = parse_line(raw)
                 if not parsed:
                     if logged < 12:
@@ -1409,6 +1440,7 @@ def status():
             "moisture_dry": CFG["moistureDry"],
             "moisture_wet": CFG["moistureWet"],
             "lamp_delta": int(s.get("lamp_delta") or 0),
+            "arduino_fault": int(s.get("arduino_fault") or 0),
             "cpu_temp": cpu_temp_c(),
             "app": "plant-select",
             "light_acc": acc,
@@ -1429,6 +1461,14 @@ def water():
         source = "home"
     threading.Thread(target=water_pulse, args=(source,), daemon=True).start()
     return jsonify({"ok": True, "source": source})
+
+
+@app.post("/pump/reset-fault")
+def pump_reset_fault():
+    send("RESET_FAULT")
+    with LOCK:
+        STATE["arduino_fault"] = 0
+    return jsonify({"ok": True})
 
 
 @app.post("/light")
@@ -1707,6 +1747,7 @@ def no_store(resp):
 def main() -> None:
     threading.Thread(target=serial_loop, daemon=True).start()
     threading.Thread(target=auto_loop, daemon=True).start()
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
     print(
         f"Canopy kiosk on http://127.0.0.1:{CFG['flaskPort']}/  "
         "(LAN bind, do not port-forward)",
