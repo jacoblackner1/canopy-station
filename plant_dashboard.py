@@ -1004,13 +1004,20 @@ def parse_line(line: str):
     return None
 
 
+# Serialises writes: heartbeat_loop (PING), water_pulse and the HTTP handlers
+# all call send() from different threads. Without this, bytes can interleave
+# ("PIWATER_MS:1000NG") and the Nano drops or mis-parses a pump command.
+SEND_LOCK = threading.Lock()
+
+
 def send(cmd: str) -> None:
     ser = SER
     if ser is None:
         return
     try:
-        ser.write((cmd + "\n").encode("ascii"))
-        ser.flush()
+        with SEND_LOCK:
+            ser.write((cmd + "\n").encode("ascii"))
+            ser.flush()
     except Exception as exc:
         print(f"serial write failed: {exc}", flush=True)
 
@@ -1519,6 +1526,8 @@ def pump_reset_fault():
     with LOCK:
         STATE["arduino_fault"] = 0
     return jsonify({"ok": True})
+
+
 @app.post("/pump/reset")
 def pump_reset():
     """Manual reset after Jacob checks the probe/reservoir. Clears lockout only;

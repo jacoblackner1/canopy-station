@@ -28,6 +28,7 @@ DEFAULT_LIMITS = {
     "jumpWindowSec": 30,
     "noResponsePulses": 3,         # pulses in a row with no moisture rise
     "noResponseMinRise": 2.0,      # % rise expected after a pulse
+    "noResponseSettleSec": 300,    # wait this long after a pulse before judging the rise
 }
 
 
@@ -45,6 +46,7 @@ class WateringGuard:
     no_response: int = 0
     _recent: deque = field(default_factory=lambda: deque(maxlen=20))
     _moist_at_pulse: float | None = None
+    _pulse_at: float = 0.0
 
     # ---------- persistence ----------
     @classmethod
@@ -114,8 +116,11 @@ class WateringGuard:
                     reason = f"moisture jumped dry by {raw - r} raw in {int(now - t)}s: probe likely pulled"
                     break
         self._recent.append((now, raw))
-        if self._moist_at_pulse is not None and not pumping:
-            # first settled reading after a pulse decides "did it respond?"
+        if (self._moist_at_pulse is not None and not pumping
+                and now - self._pulse_at >= L.get("noResponseSettleSec", 0)):
+            # first reading after the settle window decides "did it respond?"
+            # (judging the very next sample, ~200 ms after the pump stops, gave
+            # false "no rise" counts because water hadn't reached the probe yet)
             if moisture_pct - self._moist_at_pulse >= L["noResponseMinRise"]:
                 self.no_response = 0
             else:
@@ -154,6 +159,7 @@ class WateringGuard:
         if source == "auto":
             self.last_auto_pulse = now
             self._moist_at_pulse = moisture_pct
+            self._pulse_at = now
         self.save()
 
     def status(self) -> dict:
