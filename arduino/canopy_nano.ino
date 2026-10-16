@@ -32,6 +32,23 @@
 
 #include <avr/wdt.h>
 
+// Reset cause, captured before main(). Optiboot clears MCUSR before jumping
+// to the sketch and hands the original value over in r2, so reading MCUSR in
+// setup() alone never saw the watchdog flag (FAULT:3 could never fire).
+// Also disables the WDT as early as possible so a watchdog reset can't
+// re-trigger while the C runtime initialises.
+uint8_t resetCause __attribute__((section(".noinit")));
+void captureResetCause(void) __attribute__((naked, used, section(".init3")));
+void captureResetCause(void) {
+  // Naked function: no stack frame, so no locals. Store r2 directly.
+  __asm__ __volatile__("sts %0, r2" : "=m"(resetCause));
+  if (MCUSR) {
+    resetCause = MCUSR;  // no bootloader / old bootloader: MCUSR is intact
+  }
+  MCUSR = 0;
+  wdt_disable();
+}
+
 const int PIN_MOISTURE = A0;
 const int PIN_LIGHT = A1;
 const int PIN_PUMP = 8;
@@ -94,10 +111,7 @@ void setup() {
   pinMode(PIN_PUMP, OUTPUT);
   pinMode(PIN_LAMP, OUTPUT);
   digitalWrite(PIN_LAMP, LOW);
-  uint8_t mcusr = MCUSR;
-  MCUSR = 0;
-  wdt_disable();
-  if (mcusr & _BV(WDRF)) {
+  if (resetCause & _BV(WDRF)) {
     fault = 3;
   }
   Serial.begin(9600);

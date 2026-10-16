@@ -71,6 +71,12 @@ def test_no_response_locks(tmp_path):
     for i in range(2):
         w.record_pulse(1000, "auto", 20, T0 + i * 100)
         w.observe_reading(500, 20, 600, T0 + i * 100 + 10)
+    assert w.lockout is None  # still inside settle window
+    w = g(tmp_path, noResponsePulses=2, minPulseIntervalSec=0, noResponseSettleSec=60)
+    for i in range(2):
+        w.record_pulse(1000, "auto", 20, T0 + i * 1000)
+        w.observe_reading(500, 20, 600, T0 + i * 1000 + 10)   # too soon: ignored
+        w.observe_reading(500, 20, 600, T0 + i * 1000 + 120)  # judged
     assert w.lockout and "no moisture rise" in w.lockout
 
 
@@ -81,3 +87,13 @@ def test_lockout_persists_and_resets(tmp_path):
     assert w2.lockout == "test"
     w2.reset()
     assert WateringGuard.load(tmp_path / "s.json").lockout is None
+
+
+def test_rise_after_settle_clears_counter(tmp_path):
+    w = g(tmp_path, noResponsePulses=2, minPulseIntervalSec=0, noResponseSettleSec=60)
+    w.record_pulse(1000, "auto", 20, T0)
+    w.observe_reading(500, 20, 600, T0 + 120)
+    assert w.no_response == 1
+    w.record_pulse(1000, "auto", 20, T0 + 1000)
+    w.observe_reading(450, 30, 600, T0 + 1120)
+    assert w.no_response == 0 and w.lockout is None
