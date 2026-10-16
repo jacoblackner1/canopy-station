@@ -10,6 +10,7 @@ Lockout persists to disk so a reboot doesn't clear it; only the manual reset
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -29,7 +30,24 @@ DEFAULT_LIMITS = {
     "noResponsePulses": 3,         # pulses in a row with no moisture rise
     "noResponseMinRise": 2.0,      # % rise expected after a pulse
     "noResponseSettleSec": 300,    # wait this long after a pulse before judging the rise
+    # Optional water sensors on the Nano (see arduino/canopy_nano.ino SENSOR CONFIG).
+    # Disabled by default. When enabled here, the Nano must report the sensor
+    # (pin set in firmware) or watering is blocked.
+    "leakSensorEnabled": False,
+    "lowWaterSensorEnabled": False,
+    "leakSensorPin": None,         # Nano pin, informational; must match firmware PIN_LEAK
+    "lowWaterSensorPin": None,     # Nano pin, informational; must match firmware PIN_LOW_WATER
 }
+
+SENSOR_FIELD_RE = re.compile(r"\b(LEAK|LOW):([01-])", re.IGNORECASE)
+
+
+def parse_sensors(line: str) -> dict:
+    """'...|LEAK:0|LOW:-' -> {'leak': False, 'low': None}. Missing/'-' = None."""
+    out = {"leak": None, "low": None}
+    for name, val in SENSOR_FIELD_RE.findall(line or ""):
+        out[name.lower()] = None if val == "-" else val == "1"
+    return out
 
 
 @dataclass
@@ -47,6 +65,7 @@ class WateringGuard:
     _recent: deque = field(default_factory=lambda: deque(maxlen=20))
     _moist_at_pulse: float | None = None
     _pulse_at: float = 0.0
+    sensor_block: str | None = None   # live, not persisted (re-read every line)
 
     # ---------- persistence ----------
     @classmethod
@@ -134,6 +153,26 @@ class WateringGuard:
             self.trip(reason, now)
         return reason
 
+    # ---------- water sensors ----------
+    def observe_sensors(self, leak: bool | None, low: bool | None,
+                        now: float | None = None) -> str | None:
+        """Feed parsed LEAK/LOW fields. Leak latches a lockout (manual reset);
+        low water / missing sensor only blocks while true."""
+        L = self.limits
+        block = None
+        if L.get("leakSensorEnabled"):
+            if leak is None:
+                block = "leak sensor enabled in config but Nano reports none (set PIN_LEAK and re-flash)"
+            elif leak:
+                self.trip("leak detected under the station: dry it and check fittings", now)
+        if L.get("lowWaterSensorEnabled") and block is None:
+            if low is None:
+                block = "low-water sensor enabled in config but Nano reports none (set PIN_LOW_WATER and re-flash)"
+            elif low:
+                block = "reservoir low: refill to resume watering"
+        self.sensor_block = block
+        return block
+
     # ---------- pump gate ----------
     def check(self, duration_ms: int, source: str, now: float | None = None) -> tuple[bool, str]:
         now = now or time.time()
@@ -141,6 +180,8 @@ class WateringGuard:
         L = self.limits
         if self.lockout:
             return False, f"locked out: {self.lockout}"
+        if self.sensor_block:
+            return False, self.sensor_block
         if self.pulses_today >= L["maxPulsesPerDay"]:
             return False, f"daily pulse cap {L['maxPulsesPerDay']} reached"
         if self.pump_ms_today + duration_ms > L["maxPumpMsPerDay"]:
@@ -170,4 +211,5 @@ class WateringGuard:
             "pumpMsToday": self.pump_ms_today,
             "maxPulsesPerDay": self.limits["maxPulsesPerDay"],
             "maxPumpMsPerDay": self.limits["maxPumpMsPerDay"],
+            "sensorBlock": self.sensor_block,
         }

@@ -202,3 +202,11 @@ Keep sensor wires away from the lamp cord. Do not power a LED strip from the Nan
 - Auto water / lamp **wait** until a real sensor line has been parsed
 
 Manual Water / Lamp buttons still work anytime.
+
+## Leak and low-water sensors (optional, off by default)
+
+1. Wire the sensors to free Nano pins (D2/D3 suggested), each between the pin and GND.
+2. In `arduino/canopy_nano.ino` set `PIN_LEAK` / `PIN_LOW_WATER` (and the `*_ACTIVE_LOW` flags if a sensor reads backwards), then re-flash.
+3. In `station.local.json` set `"leakSensorEnabled": true` and/or `"lowWaterSensorEnabled": true` (optionally note the pins in `leakSensorPin` / `lowWaterSensorPin`).
+
+A leak stops the pump on the Nano immediately and latches a lockout (FAULT 4) until the sensor is dry **and** you press reset (`POST /pump/reset`). Low water blocks watering only while the tank is low. If a sensor is enabled in config but the firmware pin is still `-1`, watering is blocked so a half-configured unit can't run unprotected.
