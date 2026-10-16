@@ -22,8 +22,17 @@
        setup() drives the pump pin LOW again.
     5. Lockout: after a forced stop the pump refuses WATER_* until the Pi
        sends "RESET_FAULT" (so a looping bug can't keep restarting it).
-  Status line: MOISTURE:<n>|LIGHT:<n>|PUMP:<0/1>|FAULT:<code>
-    FAULT codes: 0 none, 1 max on-time hit, 2 heartbeat lost, 3 watchdog reset.
+  Status line: MOISTURE:<n>|LIGHT:<n>|PUMP:<0/1>|FAULT:<code>|LEAK:<0/1/->|LOW:<0/1/->
+    FAULT codes: 0 none, 1 max on-time hit, 2 heartbeat lost, 3 watchdog reset,
+                 4 leak detected (latched).
+    LEAK/LOW print "-" when that sensor is disabled (pin = -1).
+
+  WATER SENSORS (optional, disabled by default; see SENSOR CONFIG below):
+    Leak sensor: any wet reading stops the pump at once and latches FAULT 4.
+      RESET_FAULT only clears it once the sensor reads dry again.
+    Low-water float switch: while the reservoir is low the pump will not start
+      (and stops if running). Not latched: refilling clears it. Debounced so
+      sloshing doesn't chatter.
 
   NOTE: old-bootloader Nano clones can boot-loop on a watchdog reset.
   Use the "ATmega328P" (new/Optiboot) board option, or burn Optiboot,
@@ -54,6 +63,28 @@ const int PIN_LIGHT = A1;
 const int PIN_PUMP = 8;
 const int PIN_LAMP = 9;
 
+// ---------------- SENSOR CONFIG (edit, then re-flash) ----------------
+// Set the pin numbers once the sensors are wired. -1 = sensor not installed.
+// Placeholders: D2 / D3 are suggested free pins, but stay disabled until set.
+const int PIN_LEAK = -1;        // e.g. 2
+const int PIN_LOW_WATER = -1;   // e.g. 3
+// Active level + pull-up per sensor. Defaults match docs/hardware/bom-12v.md:
+//  Leak: Adafruit #4965 water sensor. Its S pin drives HIGH when wet and LOW
+//    when dry, so active-HIGH, no internal pull-up (add a 10k S->GND pull-down
+//    so a broken wire reads "dry"... and check it in the bench test).
+//  Low water: reed float switch between the pin and GND, internal pull-up.
+//    Mount the float so the contact is CLOSED while water is above the
+//    switch point and OPENS when low. Then a cut/unplugged wire also reads
+//    HIGH = "low" and the pump stays off (fail-safe). So: active-HIGH.
+// If a sensor reads backwards on the bench, flip its *_ACTIVE_LOW flag.
+const bool LEAK_ACTIVE_LOW = false;
+const bool LEAK_PULLUP = false;
+const bool LOW_WATER_ACTIVE_LOW = false;
+const bool LOW_WATER_PULLUP = true;
+const unsigned long LOW_WATER_DEBOUNCE_MS = 2000UL;
+const unsigned long LEAK_DEBOUNCE_MS = 100UL;
+// ----------------------------------------------------------------------
+
 const unsigned long PUMP_MAX_MS = 10000UL;          // absolute ceiling per run
 const unsigned long HEARTBEAT_TIMEOUT_MS = 3000UL;  // pump-on only
 
@@ -64,6 +95,56 @@ unsigned long pumpRunMs = 0;
 unsigned long lastRxMs = 0;
 bool pumpLegacy = false;  // started by WATER_ON (no length given)
 uint8_t fault = 0;
+bool leakNow = false;
+bool lowWaterNow = false;
+unsigned long leakSinceMs = 0;
+unsigned long lowSinceMs = 0;
+unsigned long lowClearSinceMs = 0;
+
+bool sensorActive(int pin, bool activeLow) {
+  int v = digitalRead(pin);
+  return activeLow ? (v == LOW) : (v == HIGH);
+}
+
+void pumpOff();
+
+// Called every ~50 ms. Drives leakNow / lowWaterNow and stops the pump.
+void checkSensors() {
+  unsigned long now = millis();
+  if (PIN_LEAK >= 0) {
+    if (sensorActive(PIN_LEAK, LEAK_ACTIVE_LOW)) {
+      if (leakSinceMs == 0) leakSinceMs = now | 1;
+      if (now - leakSinceMs >= LEAK_DEBOUNCE_MS) {
+        leakNow = true;
+        pumpOff();
+        fault = 4;
+      }
+    } else {
+      leakSinceMs = 0;
+      leakNow = false;
+    }
+  }
+  if (PIN_LOW_WATER >= 0) {
+    if (sensorActive(PIN_LOW_WATER, LOW_WATER_ACTIVE_LOW)) {
+      lowClearSinceMs = 0;
+      if (lowSinceMs == 0) lowSinceMs = now | 1;
+      if (now - lowSinceMs >= LOW_WATER_DEBOUNCE_MS) lowWaterNow = true;
+    } else {
+      lowSinceMs = 0;
+      if (lowClearSinceMs == 0) lowClearSinceMs = now | 1;
+      if (now - lowClearSinceMs >= LOW_WATER_DEBOUNCE_MS) lowWaterNow = false;
+    }
+    if (lowWaterNow) pumpOff();
+  }
+}
+
+void printSensor(int pin, bool active) {
+  if (pin < 0) {
+    Serial.print('-');
+  } else {
+    Serial.print(active ? 1 : 0);
+  }
+}
 
 int readPin(int pin) {
   analogRead(pin);
@@ -91,7 +172,7 @@ void pumpOff() {
 }
 
 bool pumpStart(unsigned long ms) {
-  if (fault != 0) {
+  if (fault != 0 || leakNow || lowWaterNow) {
     return false;
   }
   if (ms == 0 || ms > PUMP_MAX_MS) {
@@ -111,6 +192,13 @@ void setup() {
   pinMode(PIN_PUMP, OUTPUT);
   pinMode(PIN_LAMP, OUTPUT);
   digitalWrite(PIN_LAMP, LOW);
+  if (PIN_LEAK >= 0) pinMode(PIN_LEAK, LEAK_PULLUP ? INPUT_PULLUP : INPUT);
+  if (PIN_LOW_WATER >= 0) {
+    pinMode(PIN_LOW_WATER, LOW_WATER_PULLUP ? INPUT_PULLUP : INPUT);
+    // Start "low" until proven otherwise so a boot with an empty tank can't
+    // fire one pulse before the debounce settles.
+    lowWaterNow = true;
+  }
   if (resetCause & _BV(WDRF)) {
     fault = 3;
   }
@@ -145,6 +233,10 @@ bool handleCommand(String cmd) {
   }
   if (cmd == "RESET_FAULT") {
     pumpOff();
+    if (leakNow) {
+      fault = 4;  // still wet: refuse to clear
+      return false;
+    }
     fault = 0;
     return true;
   }
@@ -196,6 +288,7 @@ void loop() {
       cmdBuf += c;
     }
   }
+  checkSensors();
   checkPump();
   if (acted) {
     delay(80);
@@ -210,11 +303,17 @@ void loop() {
   Serial.print("|PUMP:");
   Serial.print(pumpOn ? 1 : 0);
   Serial.print("|FAULT:");
-  Serial.println(fault);
+  Serial.print(fault);
+  Serial.print("|LEAK:");
+  printSensor(PIN_LEAK, leakNow);
+  Serial.print("|LOW:");
+  printSensor(PIN_LOW_WATER, lowWaterNow);
+  Serial.println();
 
   // Split the 200 ms idle so pump checks stay responsive (~50 ms).
   for (int i = 0; i < 4; i++) {
     delay(50);
+    checkSensors();
     checkPump();
   }
 }

@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 import cv2
 import numpy as np
 import serial
-from watering_safety import DEFAULT_LIMITS, WateringGuard
+from watering_safety import DEFAULT_LIMITS, WateringGuard, parse_sensors
 from flask import Flask, Response, jsonify, make_response, request
 
 ROOT = Path(__file__).resolve().parent
@@ -1022,7 +1022,8 @@ def send(cmd: str) -> None:
         print(f"serial write failed: {exc}", flush=True)
 
 
-PUMP_FAULTS = {0: None, 1: "max on-time hit", 2: "heartbeat lost", 3: "watchdog reset"}
+PUMP_FAULTS = {0: None, 1: "max on-time hit", 2: "heartbeat lost", 3: "watchdog reset",
+               4: "leak detected"}
 FAULT_RE = re.compile(r"FAULT:(\d+)", re.IGNORECASE)
 
 
@@ -1200,6 +1201,15 @@ def serial_loop() -> None:
                             "- pump locked until RESET_FAULT",
                             flush=True,
                         )
+                if fcode is not None:
+                    sens = parse_sensors(raw)
+                    with LOCK:
+                        STATE["leak"] = sens["leak"]
+                        STATE["low_water"] = sens["low"]
+                    sblock = GUARD.observe_sensors(sens["leak"], sens["low"])
+                    if sblock and sblock != STATE.get("sensor_block_logged"):
+                        print(f"WATERING BLOCKED: {sblock}", flush=True)
+                    STATE["sensor_block_logged"] = sblock
                 parsed = parse_line(raw)
                 if not parsed:
                     if logged < 12:
@@ -1498,6 +1508,8 @@ def status():
             "arduino_fault": int(s.get("arduino_fault") or 0),
             "water_block": s.get("water_block"),
             "watering": GUARD.status(),
+            "leak": s.get("leak"),
+            "low_water": s.get("low_water"),
             "cpu_temp": cpu_temp_c(),
             "app": "plant-select",
             "light_acc": acc,
