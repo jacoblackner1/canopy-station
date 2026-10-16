@@ -5,8 +5,7 @@ water. A leak, a splashed relay board, or a loose screw terminal puts mains near
 the reservoir. For tester units nothing in the build should be above 12 V
 except the sealed, UL-listed wall adapter.
 
-Pricing: only the Adafruit driver price was looked up (Oct 12, 2026). Everything
-marked **est.** is an estimate. Check current listings before ordering.
+Pricing: the verified, itemized list (Oct 15, 2026) is in [bom-12v.md](bom-12v.md). The table below is the original estimate.
 
 ## Bill of materials (per unit)
 
@@ -34,8 +33,8 @@ relay plus the 120 V pump, so the net change to the ~$170 unit cost is small.
 12 V adapter (–) ──────────────► Driver GND ──┬── Nano GND     (COMMON GROUND required)
 Nano D8 ───────────────────────► Driver SIG   │
                                               └── (10 kΩ D8→GND pull-down if the board lacks one)
-Low-water sensor OUT ──► Nano D4 (INPUT_PULLUP if open-collector)
-Leak probe ──► Nano A2
+Low-water float (reed) ──► Nano D3 ↔ GND   (INPUT_PULLUP; closed = water OK)
+Leak sensor S (#4965) ──► Nano D2, 10 kΩ D2→GND; sensor + to 5 V, – to GND
 ```
 
 Notes:
@@ -46,7 +45,5 @@ Notes:
 - The reservoir should sit lower than the plant outlet, or there should be a check valve, so the line can't siphon after the pump stops.
 - Bench-test with the pump in a cup before you connect it to a plant. Measure ml per pulse and set `waterPulseMs` and the daily caps from that measurement (see watering limits PR).
 
-## Firmware follow-ups (after the hardware arrives)
-- Read the low-water sensor and refuse `WATER_*` when it's low (add `LOW:1` to the status line).
-- Read the leak probe and refuse to pump while it's wet (`LEAK:1`). The Pi then locks out and alerts.
-- These are not in the current PRs because the pins and sensor type aren't fixed yet.
+## Firmware
+Leak and low-water support is in the `feat/leak-lowwater-sensors` PR. The pins are placeholders (`-1`, disabled). Set `PIN_LEAK = 2` and `PIN_LOW_WATER = 3`, or whatever you wired, in `arduino/canopy_nano.ino`, re-flash, then enable both in `station.local.json`. Verify with [bench-test-procedure.md](bench-test-procedure.md) sections 4–5.
