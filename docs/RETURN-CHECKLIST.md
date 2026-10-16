@@ -11,10 +11,10 @@ The PRs are stacked, each based on the one before it. Merge in this order, or re
 - [ ] #2 Watering limits (`fix/watering-limits`, daily caps, min interval, probe-out lockout)
 - [ ] #3 Per-unit calibration moved to untracked `station.local.json` (`fix/local-calibration`)
 - [ ] #4 12 V pump migration write-up (`docs/pump-12v-migration`)
-- [ ] Review follow-ups (`fix/review-followups`, serial write lock, settle window, watchdog reset detection)
-- [ ] Leak and low-water sensors, disabled until pins are set (`feat/leak-lowwater-sensors`)
-- [ ] 12 V BOM with verified links and the bench-test procedure (`docs/bench-test-bom-checklist`)
-- [ ] This checklist (`docs/return-checklist`)
+- [ ] #5 Review follow-ups (`fix/review-followups`, serial write lock, settle window, watchdog reset detection)
+- [ ] #6 Leak and low-water sensors, disabled until pins are set (`feat/leak-lowwater-sensors`)
+- [ ] #7 12 V BOM with verified links and the bench-test procedure (`docs/bench-test-bom-checklist`)
+- [ ] #8 This checklist (`docs/return-checklist`)
 
 All 19 tests pass on the top of the stack (`python -m pytest -q`).
 
