@@ -68,12 +68,19 @@ const int PIN_LAMP = 9;
 // Placeholders: D2 / D3 are suggested free pins, but stay disabled until set.
 const int PIN_LEAK = -1;        // e.g. 2
 const int PIN_LOW_WATER = -1;   // e.g. 3
-// Active level. With INPUT_PULLUP and a switch/probe to GND, "active" = LOW.
-// Most cheap leak modules (DO pin) pull LOW when wet. Many float switches are
-// "closed when low" if mounted float-down; flip if yours reads backwards.
-const bool LEAK_ACTIVE_LOW = true;
-const bool LOW_WATER_ACTIVE_LOW = true;
-const bool SENSOR_PULLUP = true;            // use internal pull-up
+// Active level + pull-up per sensor. Defaults match docs/hardware/bom-12v.md:
+//  Leak: Adafruit #4965 water sensor. Its S pin drives HIGH when wet and LOW
+//    when dry, so active-HIGH, no internal pull-up (add a 10k S->GND pull-down
+//    so a broken wire reads "dry"... and check it in the bench test).
+//  Low water: reed float switch between the pin and GND, internal pull-up.
+//    Mount the float so the contact is CLOSED while water is above the
+//    switch point and OPENS when low. Then a cut/unplugged wire also reads
+//    HIGH = "low" and the pump stays off (fail-safe). So: active-HIGH.
+// If a sensor reads backwards on the bench, flip its *_ACTIVE_LOW flag.
+const bool LEAK_ACTIVE_LOW = false;
+const bool LEAK_PULLUP = false;
+const bool LOW_WATER_ACTIVE_LOW = false;
+const bool LOW_WATER_PULLUP = true;
 const unsigned long LOW_WATER_DEBOUNCE_MS = 2000UL;
 const unsigned long LEAK_DEBOUNCE_MS = 100UL;
 // ----------------------------------------------------------------------
@@ -185,9 +192,9 @@ void setup() {
   pinMode(PIN_PUMP, OUTPUT);
   pinMode(PIN_LAMP, OUTPUT);
   digitalWrite(PIN_LAMP, LOW);
-  if (PIN_LEAK >= 0) pinMode(PIN_LEAK, SENSOR_PULLUP ? INPUT_PULLUP : INPUT);
+  if (PIN_LEAK >= 0) pinMode(PIN_LEAK, LEAK_PULLUP ? INPUT_PULLUP : INPUT);
   if (PIN_LOW_WATER >= 0) {
-    pinMode(PIN_LOW_WATER, SENSOR_PULLUP ? INPUT_PULLUP : INPUT);
+    pinMode(PIN_LOW_WATER, LOW_WATER_PULLUP ? INPUT_PULLUP : INPUT);
     // Start "low" until proven otherwise so a boot with an empty tank can't
     // fire one pulse before the debounce settles.
     lowWaterNow = true;

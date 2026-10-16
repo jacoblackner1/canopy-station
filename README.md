@@ -205,7 +205,7 @@ Manual Water / Lamp buttons still work anytime.
 
 ## Leak and low-water sensors (optional, off by default)
 
-1. Wire the sensors to free Nano pins (D2/D3 suggested), each between the pin and GND.
+1. Wire the sensors to free Nano pins (D2 leak / D3 low-water suggested). See `docs/hardware/bom-12v.md` for parts and `arduino/canopy_nano.ino` SENSOR CONFIG for polarity (defaults: Adafruit #4965 leak sensor active-HIGH; reed float switch to GND, closed while water is OK, so a cut wire reads "low").
 2. In `arduino/canopy_nano.ino` set `PIN_LEAK` / `PIN_LOW_WATER` (and the `*_ACTIVE_LOW` flags if a sensor reads backwards), then re-flash.
 3. In `station.local.json` set `"leakSensorEnabled": true` and/or `"lowWaterSensorEnabled": true` (optionally note the pins in `leakSensorPin` / `lowWaterSensorPin`).
 
